@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import { getUserSession } from '../auth/sessionController'
 import { cmsRoles } from '../data/roleConfig'
 import { getStudentById } from '../data/studentData'
@@ -29,6 +30,19 @@ export default function TopBar({ title }) {
 
     navigate(`/students${roleQuery}`)
   }
+=======
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import NotificationBell from './NotificationBell';
+import NotificationDropdown from './NotificationDropdown';
+import { getUserSession } from '../auth/sessionController';
+
+export default function TopBar({ title }) {
+  const navigate = useNavigate();
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const session = getUserSession();
+  const role = session?.role || 'student';
+>>>>>>> 0eec7c31b0c5157183e14731cc9bfd7fe8fde4fe
 
   return (
     <header className="h-20 bg-white border-b border-slate-100 px-10 flex items-center justify-between sticky top-0 z-10 backdrop-blur-md bg-white/80">
@@ -36,6 +50,7 @@ export default function TopBar({ title }) {
         <div className="h-7" aria-hidden="true" />
       </div>
       <div className="flex items-center gap-6">
+<<<<<<< HEAD
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -51,6 +66,21 @@ export default function TopBar({ title }) {
             onClick={openSettings}
             className="p-2.5 text-slate-400 hover:bg-slate-50 rounded-xl transition-all"
             aria-label="Open settings"
+=======
+        <div className="flex items-center gap-2 relative">
+          <NotificationBell 
+            role={role} 
+            onBellClick={() => setIsNotificationOpen(!isNotificationOpen)}
+          />
+          <NotificationDropdown 
+            role={role} 
+            isOpen={isNotificationOpen}
+            onClose={() => setIsNotificationOpen(false)}
+          />
+          <button 
+            className="p-2.5 text-slate-400 hover:bg-slate-50 rounded-xl transition-all"
+            onClick={() => navigate(`/settings?role=${encodeURIComponent(role)}`)}
+>>>>>>> 0eec7c31b0c5157183e14731cc9bfd7fe8fde4fe
           >
             <span className="material-symbols-outlined text-[24px]">settings</span>
           </button>
