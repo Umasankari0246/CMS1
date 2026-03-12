@@ -155,28 +155,30 @@ export default function AddStudentModal({ isOpen, onClose, onSuccess }) {
   ];
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-300">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col border border-slate-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col border border-slate-200">
         
         {/* Progress Bar */}
-        <div className="bg-slate-50 flex items-center border-b border-slate-100 p-1">
+        <div className="bg-slate-50 flex items-center border-b border-slate-200">
           {steps.map((s, i) => (
             <div key={s.id} className="flex-1 flex items-center">
-              <div className={`h-1.5 flex-1 rounded-full mx-1 transition-all duration-500 ${step >= s.id ? 'bg-[#2563eb]' : 'bg-slate-200'}`} />
+              <div className={`h-1.5 flex-1 transition-all duration-500 ${step >= s.id ? 'bg-[#1162d4]' : 'bg-slate-200'}`} />
             </div>
           ))}
         </div>
 
         {/* Header */}
-        <div className="px-8 py-5 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-8 py-5 border-b border-slate-200 flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-              <span className="material-symbols-outlined text-[#2563eb]">person_add</span>
+            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-3">
+              <div className="p-2 bg-[#1162d4]/10 rounded-lg">
+                <span className="material-symbols-outlined text-[#1162d4]">person_add</span>
+              </div>
               Enroll New Student
             </h2>
             <p className="text-sm text-slate-500 mt-1">Step {step} of 5: {steps[step-1].label} Information</p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-all">
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors">
             <span className="material-symbols-outlined">close</span>
           </button>
         </div>
@@ -209,10 +211,10 @@ export default function AddStudentModal({ isOpen, onClose, onSuccess }) {
                 </div>
 
                 <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-5">
-                  <div className="space-y-1.5 focus-within:text-blue-600 transition-colors">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider px-1">Full Name *</label>
-                    <input name="name" value={formData.name} onChange={handleChange} className={`w-full px-4 py-3 rounded-xl border ${errors.name ? 'border-red-400 ring-4 ring-red-50' : 'border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-50'} outline-none transition-all placeholder:text-slate-300 text-slate-700 font-medium`} placeholder="Full legal name" />
-                    {errors.name && <p className="text-[10px] text-red-500 font-bold ml-1">{errors.name}</p>}
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">Full Name <span className="text-red-500">*</span></label>
+                    <input name="name" value={formData.name} onChange={handleChange} className={`w-full px-4 py-2.5 rounded-lg border ${errors.name ? 'border-red-400 focus:ring-red-100' : 'border-slate-200 focus:border-[#1162d4] focus:ring-[#1162d4]/20'} border border-slate-200 rounded-lg focus:ring-2 outline-none transition-colors text-slate-700`} placeholder="e.g. John Doe" />
+                    {errors.name && <p className="text-xs text-red-500 font-medium">{errors.name}</p>}
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider px-1">Date of Birth *</label>
@@ -516,18 +518,18 @@ export default function AddStudentModal({ isOpen, onClose, onSuccess }) {
               {step < 5 ? (
                 <button 
                   onClick={handleNext}
-                  className="px-8 py-2.5 bg-[#2563eb] text-white rounded-xl text-xs font-bold hover:shadow-lg hover:shadow-blue-500/20 active:scale-95 transition-all flex items-center gap-2"
+                  className="px-6 py-2.5 bg-[#1162d4] text-white rounded-lg text-sm font-semibold hover:bg-[#1162d4]/90 transition-colors flex items-center gap-2"
                 >
-                  CONTINUE
-                  <span className="material-symbols-outlined text-sm">arrow_forward</span>
+                  Continue
+                  <span className="material-symbols-outlined text-base">arrow_forward</span>
                 </button>
               ) : (
                 <button 
                    onClick={handleSubmit}
-                   className="px-8 py-2.5 bg-green-600 text-white rounded-xl text-xs font-bold hover:shadow-lg hover:shadow-green-500/20 active:scale-95 transition-all flex items-center gap-2"
+                   className="px-6 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors flex items-center gap-2"
                 >
-                  COMPLETE ENROLLMENT
-                  <span className="material-symbols-outlined text-sm">verified_user</span>
+                  Complete Enrollment
+                  <span className="material-symbols-outlined text-base">verified_user</span>
                 </button>
               )}
             </div>

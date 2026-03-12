@@ -46,19 +46,14 @@ export default function StudentsPage() {
 
   return (
     <Layout title="Students">
-      <div className="mb-10">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-          <div>
-            <h1 className="text-4xl font-extrabold text-[#0f172a] tracking-tight">Students</h1>
-            <p className="text-slate-500 text-sm font-semibold mt-2 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#2563eb]" />
-              Manage and monitor comprehensive student enrollment records.
-            </p>
-          </div>
-          <div className="bg-slate-100/50 px-4 py-2 rounded-2xl border border-slate-200/60 hidden xl:block">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">Last Updated</p>
-            <p className="text-xs font-black text-slate-600">March 12, 2026 • 10:25 AM</p>
-          </div>
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900">Students</h1>
+          <p className="text-slate-500 mt-1">Manage and monitor comprehensive student enrollment records.</p>
+        </div>
+        <div className="bg-slate-50 px-4 py-2 rounded-xl border border-slate-200 hidden xl:block">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">Last Updated</p>
+          <p className="text-xs font-semibold text-slate-600">March 12, 2026 • 10:25 AM</p>
         </div>
       </div>
 
@@ -91,14 +86,14 @@ export default function StudentsPage() {
       {/* High-Fidelity Pagination */}
       {filtered.length > 0 && (
         <div className="flex flex-col sm:flex-row items-center justify-between mt-8 gap-4 px-4 pb-10">
-          <p className="text-sm font-bold text-slate-400">
-            Showing <span className="text-[#1e293b]">{(currentPage - 1) * itemsPerPage + 1}-{Math.min(currentPage * itemsPerPage, filtered.length)}</span> of <span className="text-[#1e293b]">{filtered.length}</span> results
+          <p className="text-sm text-slate-500">
+            Showing <span className="font-semibold text-slate-900">{(currentPage - 1) * itemsPerPage + 1}-{Math.min(currentPage * itemsPerPage, filtered.length)}</span> of <span className="font-semibold text-slate-900">{filtered.length}</span> results
           </p>
           <div className="flex items-center gap-2">
             <button
               disabled={currentPage === 1}
               onClick={() => setCurrentPage(p => p - 1)}
-              className="px-5 py-2.5 text-xs font-bold rounded-[14px] border border-slate-100 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-sm"
+              className="px-4 py-2 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
             >
               Previous
             </button>
@@ -107,10 +102,10 @@ export default function StudentsPage() {
                 <button
                   key={page}
                   onClick={() => setCurrentPage(page)}
-                  className={`w-10 h-10 flex items-center justify-center text-xs font-bold rounded-[14px] transition-all ${
+                  className={`w-9 h-9 flex items-center justify-center text-xs font-semibold rounded-lg transition-all ${
                     page === currentPage
-                      ? 'bg-[#2563eb] text-white shadow-lg shadow-blue-100'
-                      : 'text-slate-500 hover:bg-slate-50'
+                      ? 'bg-[#1162d4] text-white shadow-sm'
+                      : 'text-slate-500 hover:bg-slate-50 text-slate-600'
                   }`}
                 >
                   {page}
@@ -120,10 +115,10 @@ export default function StudentsPage() {
               {totalPages > 5 && (
                 <button
                   onClick={() => setCurrentPage(totalPages)}
-                  className={`w-10 h-10 flex items-center justify-center text-xs font-bold rounded-[14px] transition-all ${
+                  className={`w-9 h-9 flex items-center justify-center text-xs font-semibold rounded-lg transition-all ${
                     totalPages === currentPage
-                      ? 'bg-[#2563eb] text-white shadow-lg shadow-blue-100'
-                      : 'text-slate-500 hover:bg-slate-50'
+                      ? 'bg-[#1162d4] text-white shadow-sm'
+                      : 'text-slate-500 hover:bg-slate-50 text-slate-600'
                   }`}
                 >
                   {totalPages}

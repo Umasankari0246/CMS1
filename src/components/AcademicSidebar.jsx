@@ -1,27 +1,55 @@
 import { NavLink, useNavigate } from 'react-router-dom'
+import { getUserSession } from '../auth/sessionController'
 import { destroyUserSession } from '../auth/sessionController'
+import { roleMenuGroups } from '../data/roleConfig'
 
-const navGroups = [
-  {
-    label: 'Overview',
-    items: [
-      { to: '/dashboard', icon: 'dashboard', label: 'Dashboard' },
-      { to: '/students',  icon: 'group',    label: 'Students' },
-      { to: '/faculty',   icon: 'person',   label: 'Faculty' },
-      { to: '/departments', icon: 'domain', label: 'Departments' },
-    ],
-  },
-  {
-    label: 'Administration',
-    items: [
-      { to: '/fees',      icon: 'payments',      label: 'Fees' },
-      { to: '/reports',   icon: 'assessment',    label: 'Reports' },
-    ],
-  },
-]
+const iconMap = {
+  Dashboard: 'dashboard',
+  Students: 'group',
+  Faculty: 'person',
+  Department: 'domain',
+  Exams: 'school',
+  Timetable: 'calendar_today',
+  Attendance: 'rule',
+  Placement: 'work',
+  Facility: 'apartment',
+  Fees: 'payments',
+  Reports: 'assessment',
+  Admission: 'person_add',
+  Payroll: 'receipt_long',
+  Invoices: 'description',
+  Analytics: 'query_stats',
+  Notifications: 'notifications',
+  Settings: 'settings',
+  'My Courses': 'menu_book',
+}
+
+const routeMap = {
+  Dashboard: '/dashboard',
+  Students: '/students',
+  Faculty: '/faculty',
+  Department: '/departments',
+  Exams: '/exams',
+  Timetable: '/timetable',
+  Attendance: '/attendance',
+  Placement: '/placement',
+  Facility: '/facility',
+  Fees: '/fees',
+  Reports: '/reports',
+  Admission: '/admission',
+  Payroll: '/payroll',
+  Invoices: '/invoices',
+  Analytics: '/analytics',
+  Notifications: '/notifications',
+  Settings: '/settings',
+  'My Courses': '/my-courses',
+}
 
 export default function AcademicSidebar() {
   const navigate = useNavigate()
+  const session = getUserSession()
+  const role = session?.role || 'student'
+  const menuGroups = roleMenuGroups[role] || []
 
   function handleLogout() {
     destroyUserSession()
@@ -41,47 +69,37 @@ export default function AcademicSidebar() {
       </div>
 
       <nav className="flex-1 px-4 space-y-6 overflow-y-auto">
-        {navGroups.map((group) => (
-          <div key={group.label}>
+        {menuGroups.map((group) => (
+          <div key={group.title}>
             <p className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-              {group.label}
+              {group.title}
             </p>
             <div className="space-y-1">
-              {group.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 px-4 py-3 rounded-xl text-sm transition-all duration-200 ${
-                      isActive
-                        ? 'bg-[#2563eb]/10 text-[#2563eb] font-semibold shadow-sm'
-                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
-                    }`
-                  }
-                >
-                  <span className="material-symbols-outlined text-[22px]">{item.icon}</span>
-                  <span>{item.label}</span>
-                </NavLink>
-              ))}
+              {group.items.map((item) => {
+                const to = `${routeMap[item] || '#'}${role !== 'student' && item !== 'Settings' ? `?role=${encodeURIComponent(role)}` : ''}`
+                return (
+                  <NavLink
+                    key={item}
+                    to={to}
+                    className={({ isActive }) =>
+                      `flex items-center gap-3 px-4 py-3 rounded-xl text-sm transition-all duration-200 ${
+                        isActive
+                          ? 'bg-[#2563eb]/10 text-[#2563eb] font-semibold shadow-sm'
+                          : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                      }`
+                    }
+                  >
+                    <span className="material-symbols-outlined text-[22px]">{iconMap[item] || 'circle'}</span>
+                    <span>{item}</span>
+                  </NavLink>
+                )
+              })}
             </div>
           </div>
         ))}
       </nav>
 
       <div className="p-4 border-t border-slate-100 mt-auto">
-        <NavLink
-          to="/settings"
-          className={({ isActive }) =>
-            `w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm transition-all duration-200 mb-2 ${
-              isActive
-                ? 'bg-[#2563eb]/10 text-[#2563eb] font-semibold'
-                : 'text-slate-500 hover:bg-slate-50'
-            }`
-          }
-        >
-          <span className="material-symbols-outlined text-[22px]">settings</span>
-          <span>Settings</span>
-        </NavLink>
         <button
           onClick={handleLogout}
           className="w-full flex items-center gap-3 px-4 py-3 text-slate-500 hover:text-red-500 hover:bg-red-50 rounded-xl text-sm font-medium transition-all duration-200"
