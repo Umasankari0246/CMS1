@@ -24,7 +24,7 @@ const iconMap = {
   'My Courses': 'menu_book',
 }
 
-const routeMap = {
+const getRouteMap = (role) => ({
   Dashboard: '/dashboard',
   Students: '/students',
   Faculty: '/faculty',
@@ -34,21 +34,22 @@ const routeMap = {
   Attendance: '/attendance',
   Placement: '/placement',
   Facility: '/facility',
-  Fees: '/fees',
+  Fees: role === 'admin' ? '/admin-fees' : '/fees',
   Reports: '/reports',
   Admission: '/admission',
   Payroll: '/payroll',
-  Invoices: '/invoices',
+  Invoices: role === 'admin' ? '/admin-invoices' : '/invoices',
   Analytics: '/analytics',
   Notifications: '/notifications',
   Settings: '/settings',
   'My Courses': '/my-courses',
-}
+})
 
 export default function AcademicSidebar({ onToggleSidebar }) {
   const navigate = useNavigate()
   const session = getUserSession()
   const role = session?.role || 'student'
+  const routeMap = getRouteMap(role)
   const menuGroups = roleMenuGroups[role] || []
 
   function handleLogout() {
@@ -89,7 +90,13 @@ export default function AcademicSidebar({ onToggleSidebar }) {
                   <NavLink
                     key={item}
                     to={to}
-                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm transition-all duration-200 text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                    className={({ isActive }) =>
+                      `flex items-center gap-3 px-4 py-3 rounded-xl text-sm transition-all duration-200 ${
+                        isActive
+                          ? 'bg-blue-500 text-white'
+                          : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                      }`
+                    }
                   >
                     <span className="material-symbols-outlined text-[22px]">{iconMap[item] || 'circle'}</span>
                     <span>{item}</span>

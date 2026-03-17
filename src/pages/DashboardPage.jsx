@@ -158,6 +158,26 @@ export default function DashboardPage() {
                           } else if (item.toLowerCase() === 'students') {
                             setSidebarOpen(false);
                             navigate(`/students?role=${encodeURIComponent(role)}`);
+                          } else if (item.toLowerCase() === 'admission') {
+                            setSidebarOpen(false);
+                            navigate(`/admission?role=${encodeURIComponent(role)}`);
+                          } else if (item.toLowerCase() === 'fees') {
+                            setSidebarOpen(false);
+                            const feesRoute = role === 'admin' ? '/admin-fees' : '/fees';
+                            navigate(`${feesRoute}?role=${encodeURIComponent(role)}`);
+                          } else if (item.toLowerCase() === 'invoices') {
+                            setSidebarOpen(false);
+                            const invoicesRoute = role === 'admin' ? '/admin-invoices' : '/invoices';
+                            navigate(`${invoicesRoute}?role=${encodeURIComponent(role)}`);
+                          } else if (item.toLowerCase() === 'payroll') {
+                            setSidebarOpen(false);
+                            navigate(`/payroll?role=${encodeURIComponent(role)}`);
+                          } else if (item.toLowerCase() === 'analytics') {
+                            setSidebarOpen(false);
+                            navigate(`/analytics?role=${encodeURIComponent(role)}`);
+                          } else if (item.toLowerCase() === 'department') {
+                            setSidebarOpen(false);
+                            navigate(`/departments?role=${encodeURIComponent(role)}`);
                           } else if (academicRoutes[item]) {
                             setActivePage(academicRoutes[item]);
                             setSidebarOpen(false);
