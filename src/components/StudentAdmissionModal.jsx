@@ -145,12 +145,12 @@ export default function StudentAdmissionModal({ isOpen, onClose }) {
         <div className="p-8">
           {/* Progress Steps */}
           <div className="mb-8">
-            <div className="text-sm text-gray-600 mb-4">Step {currentStep} of 8</div>
-            <div className="flex justify-between items-center">
+            <div className="text-sm text-gray-600 mb-6">Step {currentStep} of 8</div>
+            <div className="flex justify-between items-end gap-2">
               {steps.map((step, idx) => (
-                <div key={step.number} className="flex items-center flex-1">
+                <div key={step.number} className="flex flex-col items-center flex-1">
                   <div
-                    className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition ${
+                    className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition mb-2 ${
                       step.number < currentStep
                         ? 'bg-green-500 text-white'
                         : step.number === currentStep
@@ -160,14 +160,7 @@ export default function StudentAdmissionModal({ isOpen, onClose }) {
                   >
                     {step.number < currentStep ? '✓' : step.number}
                   </div>
-                  <div className="text-xs text-center flex-1 mt-2">{step.title}</div>
-                  {idx < steps.length - 1 && (
-                    <div
-                      className={`flex-1 h-0.5 mx-1 transition ${
-                        step.number < currentStep ? 'bg-green-500' : 'bg-gray-300'
-                      }`}
-                    />
-                  )}
+                  <div className="text-xs text-center font-medium">{step.title}</div>
                 </div>
               ))}
             </div>

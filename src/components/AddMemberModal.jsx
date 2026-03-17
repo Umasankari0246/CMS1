@@ -45,14 +45,14 @@ export default function AddMemberModal({ isOpen, onClose, type = 'student' }) {
               title: 'Add Student',
               icon: 'person',
               desc: 'Enroll a new student in the system',
-              steps: '5 Steps',
+              steps: '8 Steps',
             },
             {
               type: 'faculty',
               title: 'Add Faculty',
               icon: 'school',
               desc: 'Add a new faculty member',
-              steps: '4 Steps',
+              steps: '7 Steps',
             },
           ].map((option) => (
             <button
