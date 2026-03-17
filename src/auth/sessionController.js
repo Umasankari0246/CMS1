@@ -60,5 +60,5 @@ export function getUserSession() {
 }
 
 export function hasActiveSession() {
-  return Boolean(getUserSession());
+  return getUserSession() !== null;
 }

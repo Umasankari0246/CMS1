@@ -10,24 +10,30 @@ export default function NotificationBell({ role = 'student', onBellClick }) {
     const fetchUnreadCount = async () => {
       try {
         const response = await fetch(`/api/notifications/${role}/unread`);
-        const raw = await response.text();
-        const data = raw ? JSON.parse(raw) : {};
         if (!response.ok) {
-          throw new Error(data?.error || `Failed with status ${response.status}`);
+          // Silently fail if backend is not available
+          setLoading(false);
+          return;
         }
+        const data = await response.json();
         setUnreadCount(data.unreadCount || 0);
         setLoading(false);
       } catch (error) {
-        console.error('Error fetching unread count:', error);
+        // Silently fail - backend not available, just disable notifications
         setLoading(false);
       }
     };
 
-    fetchUnreadCount();
+    // Only fetch if we have a valid role
+    if (role) {
+      fetchUnreadCount();
+    }
 
     // Poll for updates every 30 seconds
-    const interval = setInterval(fetchUnreadCount, 30000);
-    return () => clearInterval(interval);
+    const interval = role ? setInterval(fetchUnreadCount, 30000) : null;
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [role]);
 
   return (
