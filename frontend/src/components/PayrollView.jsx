@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = '/api';
 
 // Icons
 function ViewIcon() {

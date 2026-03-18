@@ -154,8 +154,8 @@ export default function AddStudentModal({ isOpen, onClose, onSuccess, editStuden
         };
 
         const url = editStudent 
-          ? `http://localhost:5000/api/students/${encodeURIComponent(editStudent.rollNumber)}`
-          : 'http://localhost:5000/api/students';
+          ? `/api/students/${encodeURIComponent(editStudent.rollNumber)}`
+          : '/api/students';
         
         const method = editStudent ? 'PUT' : 'POST';
 
