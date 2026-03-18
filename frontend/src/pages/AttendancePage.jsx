@@ -16,6 +16,12 @@ const FALLBACK_WEEKLY = [
 // ─── Attendance helpers ──────────────────────────────────────────────────────
 const REQUIRED_PCT = 75
 
+const ATTENDANCE_RANGE_OPTIONS = [
+  { id: 'below_75', label: 'Below 75%' },
+  { id: '75_to_85', label: '75% - 84.9%' },
+  { id: '85_and_above', label: '85% and above' },
+]
+
 function calcPct(present, total) {
   if (!total) return 0
   return Number(((present / total) * 100).toFixed(1))
@@ -41,6 +47,13 @@ function safeClasses(present, total) {
 
 function normalizeId(v) {
   return String(v || '').replace('#', '').trim().toUpperCase()
+}
+
+function isInAttendanceRange(pct, rangeId) {
+  if (rangeId === 'below_75') return pct < 75
+  if (rangeId === '75_to_85') return pct >= 75 && pct < 85
+  if (rangeId === '85_and_above') return pct >= 85
+  return true
 }
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -168,10 +181,13 @@ export default function AttendancePage({ noLayout = false }) {
   const isAdmin       = role === 'admin'
   const isStudent     = role === 'student'
 
-  const [activeTab,    setActiveTab]    = useState('students')
-  const [statusFilter, setStatusFilter] = useState('All')
-  const [filterOpen,   setFilterOpen]   = useState(false)
-  const [searchQuery,  setSearchQuery]  = useState('')
+  const [activeTab,               setActiveTab]               = useState('students')
+  const [selectedStatuses,        setSelectedStatuses]        = useState([])
+  const [selectedAttendanceRange, setSelectedAttendanceRange] = useState([])
+  const [selectedCourses,         setSelectedCourses]         = useState([])
+  const [activeFilterTab,         setActiveFilterTab]         = useState('status')
+  const [filterOpen,              setFilterOpen]              = useState(false)
+  const [searchQuery,             setSearchQuery]             = useState('')
   const filterRef = useRef(null)
 
   const [studentData,      setStudentData]      = useState(FALLBACK_STUDENTS)
@@ -215,17 +231,64 @@ export default function AttendancePage({ noLayout = false }) {
 
   const currentTabData   = isStudent ? scopedStudents : (isAdmin ? (activeTab === 'students' ? scopedStudents : scopedStaff) : scopedStaff)
   const currentTableType = isStudent ? 'student'      : (isAdmin ? (activeTab === 'students' ? 'student' : 'staff') : 'staff')
+  const statusOptions = isAdmin
+    ? ['Good', 'At Risk', 'Critical']
+    : ['Eligible for Exams', 'Low Attendance']
 
-  const filterOptions = isAdmin
-    ? ['All', 'Good', 'At Risk', 'Critical']
-    : ['All', 'Eligible for Exams', 'Low Attendance']
+  const courseOptions = Array.from(
+    new Set(
+      currentTabData
+        .map((item) => (currentTableType === 'staff' ? item.department : item.course))
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b))
+
+  const activeFilterCount =
+    selectedStatuses.length + selectedAttendanceRange.length + selectedCourses.length
+
+  const filterTabs = [
+    { id: 'status', label: 'Status' },
+    { id: 'attendance', label: 'Attendance %' },
+    { id: 'course', label: currentTableType === 'staff' ? 'Department' : 'Course' },
+  ]
+
+  function toggleFilterValue(value, setter) {
+    setter((prev) =>
+      prev.includes(value)
+        ? prev.filter((item) => item !== value)
+        : [...prev, value]
+    )
+  }
+
+  function clearAllFilters() {
+    setSelectedStatuses([])
+    setSelectedAttendanceRange([])
+    setSelectedCourses([])
+  }
 
   const filteredData = currentTabData.filter(s => {
     const pct = calcPct(s.present, s.total)
-    const statusMatch = statusFilter === 'All' ||
-      (isAdmin ? getRiskStatus(pct) === statusFilter : getEligibilityStatus(pct) === statusFilter)
-    return statusMatch && s.name.toLowerCase().includes(searchQuery.toLowerCase())
+    const statusValue = isAdmin ? getRiskStatus(pct) : getEligibilityStatus(pct)
+    const courseValue = currentTableType === 'staff' ? s.department : s.course
+
+    const statusMatch =
+      selectedStatuses.length === 0 || selectedStatuses.includes(statusValue)
+    const attendanceRangeMatch =
+      selectedAttendanceRange.length === 0 ||
+      selectedAttendanceRange.some((rangeId) => isInAttendanceRange(pct, rangeId))
+    const courseMatch =
+      selectedCourses.length === 0 || selectedCourses.includes(courseValue)
+    const searchMatch = s.name.toLowerCase().includes(searchQuery.toLowerCase())
+
+    return statusMatch && attendanceRangeMatch && courseMatch && searchMatch
   })
+
+  useEffect(() => {
+    setSelectedCourses((prev) => {
+      const next = prev.filter((course) => courseOptions.includes(course))
+      return next.length === prev.length ? prev : next
+    })
+  }, [courseOptions])
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -451,7 +514,7 @@ export default function AttendancePage({ noLayout = false }) {
         )}
 
         {isAdmin && (
-          <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center justify-end gap-3">
             {/* Search */}
             <div className="relative">
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">search</span>
@@ -469,35 +532,117 @@ export default function AttendancePage({ noLayout = false }) {
               <button
                 onClick={() => setFilterOpen(prev => !prev)}
                 className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border transition-all duration-200 ${
-                  statusFilter !== 'All'
+                  activeFilterCount > 0
                     ? 'bg-[#1162d4] text-white border-[#1162d4] shadow-sm'
                     : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300 shadow-sm'
                 }`}
               >
                 <span className="material-symbols-outlined text-lg">filter_list</span>
-                {statusFilter !== 'All' && <span>{statusFilter}</span>}
+                {activeFilterCount > 0 && <span>{activeFilterCount}</span>}
               </button>
 
               {filterOpen && (
-                <div className="absolute right-0 mt-2 w-52 bg-white border border-slate-200 rounded-xl shadow-lg z-20 py-1 animate-dropIn origin-top-right">
-                  {filterOptions.map((opt) => (
+                <div className="absolute right-0 mt-2 w-72 bg-white border border-slate-200 rounded-xl shadow-lg z-20 animate-dropIn origin-top-right overflow-hidden">
+                  <div className="border-b border-slate-100 px-2 pt-1.5">
+                    <div className="grid grid-cols-3 gap-1">
+                      {filterTabs.map((tab) => (
+                        <button
+                          key={tab.id}
+                          onClick={() => setActiveFilterTab(tab.id)}
+                          className={`px-2 py-2 text-xs font-semibold rounded-t-lg transition-colors ${
+                            activeFilterTab === tab.id
+                              ? 'text-[#1162d4] border-b-2 border-[#1162d4]'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 max-h-56 overflow-y-auto">
+                    {activeFilterTab === 'status' && (
+                      <div className="space-y-1">
+                        {statusOptions.map((opt) => {
+                          const checked = selectedStatuses.includes(opt)
+                          return (
+                            <button
+                              key={opt}
+                              onClick={() => toggleFilterValue(opt, setSelectedStatuses)}
+                              className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                                checked ? 'bg-[#1162d4]/10 text-[#1162d4] font-semibold' : 'text-slate-600 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span className="flex items-center gap-2">
+                                <span className={`w-2 h-2 rounded-full ${
+                                  opt === 'Good' || opt === 'Eligible for Exams' ? 'bg-green-500' :
+                                  opt === 'At Risk' ? 'bg-orange-500' : 'bg-red-500'
+                                }`} />
+                                {opt}
+                              </span>
+                              {checked && <span className="material-symbols-outlined text-base">check</span>}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    {activeFilterTab === 'attendance' && (
+                      <div className="space-y-1">
+                        {ATTENDANCE_RANGE_OPTIONS.map((range) => {
+                          const checked = selectedAttendanceRange.includes(range.id)
+                          return (
+                            <button
+                              key={range.id}
+                              onClick={() => toggleFilterValue(range.id, setSelectedAttendanceRange)}
+                              className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                                checked ? 'bg-[#1162d4]/10 text-[#1162d4] font-semibold' : 'text-slate-600 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span>{range.label}</span>
+                              {checked && <span className="material-symbols-outlined text-base">check</span>}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    {activeFilterTab === 'course' && (
+                      <div className="space-y-1">
+                        {courseOptions.length === 0 && (
+                          <p className="px-3 py-2 text-sm text-slate-400">No options available</p>
+                        )}
+                        {courseOptions.map((course) => {
+                          const checked = selectedCourses.includes(course)
+                          return (
+                            <button
+                              key={course}
+                              onClick={() => toggleFilterValue(course, setSelectedCourses)}
+                              className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                                checked ? 'bg-[#1162d4]/10 text-[#1162d4] font-semibold' : 'text-slate-600 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span className="truncate text-left">{course}</span>
+                              {checked && <span className="material-symbols-outlined text-base">check</span>}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="border-t border-slate-100 px-3 py-2.5 flex items-center justify-between bg-slate-50/70">
+                    <p className="text-xs text-slate-500">{activeFilterCount} filter(s) applied</p>
                     <button
-                      key={opt}
-                      onClick={() => { setStatusFilter(opt); setFilterOpen(false) }}
-                      className={`w-full flex items-center gap-2 px-4 py-2.5 text-sm transition-colors duration-150 ${
-                        statusFilter === opt ? 'bg-[#1162d4]/10 text-[#1162d4] font-semibold' : 'text-slate-600 hover:bg-slate-50'
-                      }`}
+                      onClick={clearAllFilters}
+                      disabled={activeFilterCount === 0}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {opt !== 'All' && (
-                        <span className={`w-2 h-2 rounded-full ${
-                          opt === 'Good' || opt === 'Eligible for Exams' ? 'bg-green-500' :
-                          opt === 'At Risk' ? 'bg-orange-500' : 'bg-red-500'
-                        }`} />
-                      )}
-                      {opt}
-                      {statusFilter === opt && <span className="material-symbols-outlined text-base ml-auto">check</span>}
+                      <span className="material-symbols-outlined text-sm">restart_alt</span>
+                      Clear All Filters
                     </button>
-                  ))}
+                  </div>
                 </div>
               )}
             </div>
