@@ -466,8 +466,6 @@ a {
   gap: 12px;
 }
 
-<<<<<<< HEAD
-=======
 .logo-text-wrap {
   min-width: 0;
   flex: 1;
@@ -515,7 +513,6 @@ a {
   fill: #4b5563;
 }
 
->>>>>>> c10e7d5074fee957e11486f5f75b3bb8cdb2b414
 .logo-mark {
   width: 36px;
   height: 36px;
@@ -1155,8 +1152,6 @@ a {
   .mobile-menu-btn {
     display: flex;
   }
-<<<<<<< HEAD
-=======
 
   .sidebar-desktop-toggle {
     display: none;
@@ -1171,5 +1166,4 @@ a {
   .main-content.sidebar-hidden {
     margin-left: 0;
   }
->>>>>>> c10e7d5074fee957e11486f5f75b3bb8cdb2b414
 }
