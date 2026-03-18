@@ -2,14 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { destroyUserSession, getUserSession } from '../auth/sessionController';
 import { cmsRoles, roleMenuGroups } from '../data/roleConfig';
-import { getStudentById } from '../data/studentData';
-import NotificationBell from '../components/NotificationBell';
-import NotificationDropdown from '../components/NotificationDropdown';
-import TimetablePage from './TimetablePage';
-import AttendancePage from './AttendancePage';
-import ExamsPage from './ExamsPage';
-import PlacementPage from './PlacementPage';
-import FacilityPage from './FacilityPage';
+import PayrollView from '../components/PayrollView';
 
 function GraduationIcon() {
   return (
@@ -39,32 +32,7 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
-  const [activePage, setActivePage] = useState(null);
-  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-
-  const pageMap = {
-    '/timetable': TimetablePage,
-    '/attendance': AttendancePage,
-    '/exams': ExamsPage,
-    '/placement': PlacementPage,
-    '/facility': FacilityPage,
-  };
-  const pageTitles = {
-    '/timetable': 'Timetable',
-    '/attendance': 'Attendance',
-    '/exams': 'Exams',
-    '/placement': 'Placement',
-    '/facility': 'Facility',
-  };
-  const pageSubtitles = {
-    '/timetable': 'View and manage weekly class schedules across subjects and sections.',
-    '/attendance': 'Track and record student attendance for all mapped subjects.',
-    '/exams': 'Manage exam schedules, seat plans, and result submissions.',
-    '/placement': 'Monitor campus recruitment drives and student placement status.',
-    '/facility': 'Oversee campus infrastructure, labs, and facility bookings.',
-  };
-  const ActivePage = activePage ? pageMap[activePage] : null;
+  const [activeTab, setActiveTab] = useState('Dashboard');
 
   const session = getUserSession();
   const sessionRole = session?.role || null;
@@ -73,27 +41,6 @@ export default function DashboardPage() {
   const data = cmsRoles[role];
   const menuGroups = roleMenuGroups[role] || roleMenuGroups.student;
   const userId = sessionUserId || 'N/A';
-  const roleQuery = `?role=${encodeURIComponent(role)}`;
-  const knownStudent = sessionUserId ? getStudentById(sessionUserId) : null;
-  const fallbackStudentId = 'STU-2024-1547';
-
-  function handleOpenProfileDetails() {
-    if (role === 'student') {
-      const studentId = knownStudent ? sessionUserId : fallbackStudentId;
-      navigate(`/students/${encodeURIComponent(studentId)}${roleQuery}`);
-      return;
-    }
-
-    navigate(`/students${roleQuery}`);
-  }
-
-  const academicRoutes = {
-    Exams: '/exams',
-    Timetable: '/timetable',
-    Attendance: '/attendance',
-    Placement: '/placement',
-    Facility: '/facility',
-  };
 
   useEffect(() => {
     if (!sessionRole || !sessionUserId) {
@@ -101,7 +48,7 @@ export default function DashboardPage() {
       return undefined;
     }
 
-    document.title = 'MIT Connect - Dashboard';
+    document.title = `MIT Connect - ${data.label} Dashboard`;
 
     const expectedSearch = `?role=${encodeURIComponent(sessionRole)}`;
     if (location.search !== expectedSearch) {
@@ -125,18 +72,6 @@ export default function DashboardPage() {
 
   return (
     <>
-      {!isSidebarVisible && (
-        <button
-          type="button"
-          className="sidebar-desktop-toggle"
-          onClick={() => setIsSidebarVisible(true)}
-          aria-label="Show sidebar"
-          title="Show sidebar"
-        >
-          <MenuIcon />
-        </button>
-      )}
-
       <div
         className={`sidebar-overlay${sidebarOpen ? ' active' : ''}`}
         onClick={() => setSidebarOpen(false)}
@@ -144,24 +79,15 @@ export default function DashboardPage() {
       />
 
       <div className="dashboard-wrapper role-layout">
-        <aside className={`sidebar${sidebarOpen ? ' open' : ''}${isSidebarVisible ? '' : ' hidden-desktop'}`} id="sidebar">
+        <aside className={`sidebar${sidebarOpen ? ' open' : ''}`} id="sidebar">
           <div className="sidebar-logo">
             <div className="logo-mark">
               <GraduationIcon />
             </div>
             <div className="logo-text-wrap">
               <div className="logo-title">MIT Connect</div>
-              <div className="logo-sub">{data.label} Portal</div>
+              <div className="logo-sub">MIT Connect - {data.label} Portal</div>
             </div>
-            <button
-              type="button"
-              className="sidebar-toggle-btn"
-              onClick={() => setIsSidebarVisible(false)}
-              aria-label="Hide sidebar"
-              title="Hide sidebar"
-            >
-              <MenuIcon />
-            </button>
           </div>
 
           <nav className="sidebar-nav">
@@ -173,26 +99,11 @@ export default function DashboardPage() {
                     <li key={item}>
                       <a
                         href="#"
-                        className={
-                          (activePage === null && groupIndex === 0 && itemIndex === 0) ||
-                          (activePage !== null && academicRoutes[item] === activePage)
-                            ? 'active' : ''
-                        }
+                        className={activeTab === item ? 'active' : ''}
                         onClick={(event) => {
                           event.preventDefault();
-                          if (item.toLowerCase() === 'settings') {
-                            setSidebarOpen(false);
-                            navigate(`/settings?role=${encodeURIComponent(role)}`);
-                          } else if (item.toLowerCase() === 'students') {
-                            setSidebarOpen(false);
-                            navigate(`/students?role=${encodeURIComponent(role)}`);
-                          } else if (academicRoutes[item]) {
-                            setActivePage(academicRoutes[item]);
-                            setSidebarOpen(false);
-                          } else {
-                            setActivePage(null);
-                            setSidebarOpen(false);
-                          }
+                          setActiveTab(item);
+                          setSidebarOpen(false); // Close mobile menu if open
                         }}
                       >
                         {item}
@@ -218,54 +129,30 @@ export default function DashboardPage() {
           </div>
         </aside>
 
-        <main className={`main-content${isSidebarVisible ? '' : ' sidebar-hidden'}`}>
+        <main className="main-content">
           <div className="topbar">
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <button className="mobile-menu-btn" onClick={() => { setIsSidebarVisible(true); setSidebarOpen(true); }} aria-label="Toggle menu">
+              <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Toggle menu">
                 <MenuIcon />
               </button>
+              <div className="topbar-left">
+                <h2>{activeTab === 'Dashboard' ? `${data.label} Dashboard` : activeTab}</h2>
+                <p>{activeTab === 'Dashboard' ? data.subtitle : `Manage ${activeTab.toLowerCase()} records and settings`}</p>
+              </div>
             </div>
             <div className="topbar-right">
-              <div style={{ position: 'relative' }}>
-                <NotificationBell
-                  role={role}
-                  onBellClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                />
-                <NotificationDropdown
-                  role={role}
-                  isOpen={isNotificationOpen}
-                  onClose={() => setIsNotificationOpen(false)}
-                />
-              </div>
-              <button
-                type="button"
-                onClick={handleOpenProfileDetails}
-                className="profile-avatar-wrap bg-transparent border-0 cursor-pointer"
-                aria-label="Open profile details"
-                title="Open profile"
-              >
-                <div className="avatar-initials" style={{ width: 40, height: 40, fontSize: 14 }}>
-                  {data.label.slice(0, 2).toUpperCase()}
-                </div>
-                <span className="avatar-status" />
-              </button>
+              <span className="badge badge-info">{data.label}</span>
             </div>
           </div>
 
-          {ActivePage && <ActivePage noLayout />}
-          {!ActivePage && (
+          {activeTab === 'Dashboard' && (
             <>
               <div className="profile-header">
                 <div className="profile-left">
-                  <button
-                    type="button"
-                    onClick={handleOpenProfileDetails}
-                    className="profile-avatar-wrap bg-transparent border-0 cursor-pointer"
-                    aria-label="Open student full details"
-                  >
+                  <div className="profile-avatar-wrap">
                     <div className="avatar-initials">{data.label.slice(0, 2).toUpperCase()}</div>
                     <span className="avatar-status" />
-                  </button>
+                  </div>
                   <div className="profile-info">
                     <div className="student-name">{data.name}</div>
                     <div className="profile-meta">
@@ -361,6 +248,8 @@ export default function DashboardPage() {
               </div>
             </>
           )}
+
+          {activeTab === 'Payroll' && <PayrollView />}
         </main>
       </div>
     </>
