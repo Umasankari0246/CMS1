@@ -63,6 +63,10 @@ function myLabel({month,year}){
   if (month == null || year == null) return '';
   return `${MONTHS_ALL[month]} ${year}`;
 }
+function getCurrentMY(){
+  const now = new Date();
+  return { month: now.getMonth(), year: now.getFullYear() };
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // DATA BANKS
@@ -431,13 +435,14 @@ function exportReport(format, role, months, rangeLabel, tab, analyticsData) {
 // ══════════════════════════════════════════════════════════════════════════════
 // CALENDAR RANGE PICKER
 // ══════════════════════════════════════════════════════════════════════════════
-function CalendarRangePicker({startMY,endMY,onChange,onClose}){
+function CalendarRangePicker({startMY,endMY,onChange,onClose,maxKey}){
   // Keep selection local until end month is chosen; this avoids parent-state resets
   // after the first click and makes range selection reliable.
   const [viewYear,  setViewYear]  = useState(startMY?.year ?? new Date().getFullYear());
   const [phase,     setPhase]     = useState('start');
   const [hoverKey,  setHoverKey]  = useState(null);
   const [tempStart, setTempStart] = useState(null);
+  const maxYear = keyToMY(maxKey).year;
 
   const confirmedStartKey = startMY ? myToKey(startMY) : null;
   const confirmedEndKey   = endMY   ? myToKey(endMY)   : null;
@@ -452,6 +457,7 @@ function CalendarRangePicker({startMY,endMY,onChange,onClose}){
   function clickMonth(mi){
     const clicked = {month:mi, year:viewYear};
     const ck = myToKey(clicked);
+    if (ck > maxKey) return;
     console.log('clickMonth:', { mi, phase, tempStart, clicked, ck });
     if (phase === 'start') {
       setTempStart(clicked);
@@ -513,9 +519,14 @@ function CalendarRangePicker({startMY,endMY,onChange,onClose}){
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           <button onClick={()=>setViewYear(y=>y-1)} style={{width:28,height:28,borderRadius:7,border:'1px solid #e5e7eb',background:'#f9fafb',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}><Ico.ChevL/></button>
           <select value={viewYear} onChange={e=>setViewYear(Number(e.target.value))} style={{border:'1px solid #e5e7eb',borderRadius:7,padding:'2px 6px',fontWeight:700,fontSize:14,color:'#111827',cursor:'pointer',outline:'none'}}>
-            {YEARS.map(y=><option key={y}>{y}</option>)}
+            {YEARS.filter(y=>y<=maxYear).map(y=><option key={y}>{y}</option>)}
           </select>
-          <button onClick={()=>setViewYear(y=>y+1)} style={{width:28,height:28,borderRadius:7,border:'1px solid #e5e7eb',background:'#f9fafb',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}><Ico.ChevR/></button>
+          <button
+            disabled={viewYear>=maxYear}
+            onClick={()=>setViewYear(y=>Math.min(maxYear,y+1))}
+            style={{width:28,height:28,borderRadius:7,border:'1px solid #e5e7eb',background:'#f9fafb',cursor:viewYear>=maxYear?'not-allowed':'pointer',opacity:viewYear>=maxYear?.5:1,display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <Ico.ChevR/>
+          </button>
         </div>
         <div style={{fontSize:12,fontWeight:600,padding:'3px 10px',borderRadius:999,
           color:      phase==='start'?'#2563eb':'#f97316',
@@ -527,15 +538,20 @@ function CalendarRangePicker({startMY,endMY,onChange,onClose}){
       </div>
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6}}>
-        {MONTHS_ALL.map((m,mi)=>(
+        {MONTHS_ALL.map((m,mi)=>{
+          const monthKey = myToKey({month:mi,year:viewYear});
+          const isFuture = monthKey > maxKey;
+          return (
           <button key={m}
+            disabled={isFuture}
             style={cellStyle(mi)}
             onClick={()=>clickMonth(mi)}
-            onMouseEnter={()=>{ if(phase==='end') setHoverKey(myToKey({month:mi,year:viewYear})); }}
+            onMouseEnter={()=>{ if(phase==='end' && !isFuture) setHoverKey(monthKey); }}
             onMouseLeave={()=>setHoverKey(null)}>
             {m}
           </button>
-        ))}
+          );
+        })}
       </div>
 
       <div style={{marginTop:14,padding:'8px 14px',background:'#f0fdf4',borderRadius:10,border:'1px solid #bbf7d0',fontSize:12,fontWeight:700,color:'#15803d',textAlign:'center'}}>
@@ -1696,6 +1712,8 @@ export default function AnalyticsPage({role:propRole}){
   const [semester,   setSemester]   = useState(SEMESTER_OPTS[0]);
   const [department, setDepartment] = useState(DEPT_OPTS[0]);
   const [adminTab,   setAdminTab]   = useState('students');
+  const currentMY = useMemo(() => getCurrentMY(), []);
+  const currentKey = myToKey(currentMY);
 
   // Add state for real analytics data
   const [analyticsData, setAnalyticsData] = useState(null);
@@ -1739,6 +1757,23 @@ export default function AnalyticsPage({role:propRole}){
     return()=>document.removeEventListener('mousedown',onOut);
   },[calOpen]);
 
+  useEffect(() => {
+    const startKey = myToKey(startMY);
+    const endKey = myToKey(endMY);
+
+    if (startKey <= currentKey && endKey <= currentKey) return;
+
+    const nextStart = startKey > currentKey ? currentMY : startMY;
+    const nextEnd = endKey > currentKey ? currentMY : endMY;
+
+    if (myToKey(nextStart) !== startKey) {
+      setStartMY(nextStart);
+    }
+    if (myToKey(nextEnd) !== endKey) {
+      setEndMY(nextEnd);
+    }
+  }, [startMY, endMY, currentKey, currentMY]);
+
   // activeMonths: ordered list of month NAME strings for the selected range.
   // Uses keys (year*12+month) so cross-year ranges never collapse duplicate names.
   // Each unique key maps to exactly one month name — no deduplication needed.
@@ -1765,7 +1800,7 @@ export default function AnalyticsPage({role:propRole}){
             <button onClick={()=>setCalOpen(o=>!o)} style={{display:'flex',alignItems:'center',gap:8,height:38,padding:'0 14px',borderRadius:9,border:`1.5px solid ${calOpen?'#2563eb':'#e5e7eb'}`,background:calOpen?'#eff6ff':'#fff',color:'#1f2937',fontSize:13,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',boxShadow:calOpen?'0 0 0 3px rgba(37,99,235,.12)':'none',transition:'all 0.15s'}}>
               <Ico.Calendar/>{triggerLabel}<span style={{fontSize:10,color:'#9ca3af',marginLeft:2}}>▾</span>
             </button>
-            {calOpen&&<CalendarRangePicker startMY={startMY} endMY={endMY} onChange={({startMY:s,endMY:e})=>{setStartMY(s);setEndMY(e);}} onClose={()=>setCalOpen(false)}/>}
+            {calOpen&&<CalendarRangePicker startMY={startMY} endMY={endMY} maxKey={currentKey} onChange={({startMY:s,endMY:e})=>{setStartMY(s);setEndMY(e);}} onClose={()=>setCalOpen(false)}/>}
           </div>
 
           <div>
@@ -1786,7 +1821,14 @@ export default function AnalyticsPage({role:propRole}){
 
           <div>
             <div style={{fontSize:11,fontWeight:700,color:'transparent',marginBottom:5}}>—</div>
-            <button onClick={()=>{setStartMY({month:0,year:2026});setEndMY({month:2,year:2026});setSemester(SEMESTER_OPTS[0]);setDepartment(DEPT_OPTS[0]);}} style={{height:38,padding:'0 14px',borderRadius:9,border:'1.5px solid #e5e7eb',background:'#f9fafb',color:'#6b7280',fontSize:12,fontWeight:600,cursor:'pointer'}}>Reset</button>
+            <button onClick={()=>{
+              const resetEnd = currentMY;
+              const resetStart = keyToMY(Math.max(0, currentKey - 2));
+              setStartMY(resetStart);
+              setEndMY(resetEnd);
+              setSemester(SEMESTER_OPTS[0]);
+              setDepartment(DEPT_OPTS[0]);
+            }} style={{height:38,padding:'0 14px',borderRadius:9,border:'1.5px solid #e5e7eb',background:'#f9fafb',color:'#6b7280',fontSize:12,fontWeight:600,cursor:'pointer'}}>Reset</button>
           </div>
 
           <div style={{marginLeft:'auto'}}>
