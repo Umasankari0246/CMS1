@@ -296,6 +296,13 @@ function exportReport(format, role, months, rangeLabel, tab, analyticsData) {
     console.log('Student analytics:', analyticsData?.studentAnalytics);
     console.log('Finance data:', analyticsData?.financeData);
     
+    const parseMoney = (value) => {
+      if (typeof value === 'number') return value;
+      if (typeof value !== 'string') return 0;
+      const num = Number(value.replace(/[^\d.]/g, ''));
+      return Number.isFinite(num) ? num : 0;
+    };
+
     let headers = [];
     let rows = [];
     
@@ -317,11 +324,12 @@ function exportReport(format, role, months, rangeLabel, tab, analyticsData) {
           });
         } else {
           console.log('Using mock student data for export');
+          const avgCgpa = (Object.values(cgpaByDept).reduce((sum, cgpa) => sum + cgpa, 0) / Object.values(cgpaByDept).length).toFixed(1);
           rows = months.map(m => {
             const c = adminCardsByMonth[m] || adminCardsByMonth['Mar'];
             const att = Math.round((adminAttByMonth[m] || []).reduce((s, d) => s + d.avg, 0) / 5);
             const pass = Math.round((adminExamByMonth[m] || []).reduce((s, d) => s + d.pass, 0) / 5);
-            return [m, c.students, att, pass, c.courses];
+            return [m, c.students, `${att}%`, avgCgpa, `${pass}%`];
           });
         }
       } else if (tab === 'faculty') {
@@ -376,7 +384,9 @@ function exportReport(format, role, months, rangeLabel, tab, analyticsData) {
         console.log('Using mock finance data for finance role export');
         rows = months.map(m => {
           const c = financeCardsByMonth[m] || financeCardsByMonth['Mar'];
-          return [m, c.collected || 0, c.pending || 0, (c.collected || 0) + (c.pending || 0)];
+          const collected = parseMoney(c.collected);
+          const pending = parseMoney(c.pending);
+          return [m, collected, pending, collected + pending];
         });
       }
     }
@@ -422,63 +432,48 @@ function exportReport(format, role, months, rangeLabel, tab, analyticsData) {
 // CALENDAR RANGE PICKER
 // ══════════════════════════════════════════════════════════════════════════════
 function CalendarRangePicker({startMY,endMY,onChange,onClose}){
-  // Initialize with existing dates
-  const [viewYear,  setViewYear]  = useState(startMY?.year??new Date().getFullYear());
-  const [phase,     setPhase]     = useState(startMY && endMY && (myToKey(startMY) !== myToKey(endMY)) ? 'end' : 'start');
+  // Keep selection local until end month is chosen; this avoids parent-state resets
+  // after the first click and makes range selection reliable.
+  const [viewYear,  setViewYear]  = useState(startMY?.year ?? new Date().getFullYear());
+  const [phase,     setPhase]     = useState('start');
   const [hoverKey,  setHoverKey]  = useState(null);
   const [tempStart, setTempStart] = useState(null);
 
   const confirmedStartKey = startMY ? myToKey(startMY) : null;
   const confirmedEndKey   = endMY   ? myToKey(endMY)   : null;
 
-  // Reset phase and tempStart when dates change externally
   useEffect(() => {
-    if (startMY && endMY && (myToKey(startMY) !== myToKey(endMY))) {
-      setPhase('end');
-      setTempStart(null);
-    } else {
-      setPhase('start');
-      setTempStart(null);
-    }
+    setViewYear(startMY?.year ?? new Date().getFullYear());
+    setPhase('start');
+    setTempStart(null);
+    setHoverKey(null);
   }, [startMY, endMY]);
 
   function clickMonth(mi){
     const clicked = {month:mi, year:viewYear};
     const ck = myToKey(clicked);
     console.log('clickMonth:', { mi, phase, tempStart, clicked, ck });
-    if(phase==='start'){
-      // First click — set start, preview same as start for now
-      console.log('Setting tempStart to:', clicked);
+    if (phase === 'start') {
       setTempStart(clicked);
-      onChange({startMY:clicked, endMY:clicked});
-      console.log('Setting phase to end');
+      setHoverKey(ck);
       setPhase('end');
-      
-      // Add timeout to check if tempStart was set
-      setTimeout(() => {
-        console.log('tempStart after timeout should be set');
-      }, 100);
-      
-    } else {
-      // Second click — finalise range
-      if (!tempStart) {
-        console.log('tempStart is null, returning');
-        return;
-      }
-      const sk = myToKey(tempStart);
-      // Always ensure start is earlier than end
-      if(ck < sk){ 
-        console.log('Calling onChange with:', {startMY:clicked, endMY:tempStart});
-        onChange({startMY:clicked, endMY:tempStart}); 
-      } else { 
-        console.log('Calling onChange with:', {startMY:tempStart, endMY:clicked});
-        onChange({startMY:tempStart, endMY:clicked}); 
-      }
-      console.log('Setting tempStart to null and phase to start');
-      setTempStart(null);
-      setPhase('start');
-      onClose();
+      return;
     }
+
+    // Second click finalizes the range.
+    const selectedStart = tempStart ?? clicked;
+    const sk = myToKey(selectedStart);
+
+    if (ck < sk) {
+      onChange({ startMY: clicked, endMY: selectedStart });
+    } else {
+      onChange({ startMY: selectedStart, endMY: clicked });
+    }
+
+    setTempStart(null);
+    setHoverKey(null);
+    setPhase('start');
+    onClose();
   }
 
   function cellStyle(mi){
@@ -488,11 +483,9 @@ function CalendarRangePicker({startMY,endMY,onChange,onClose}){
     let sk, ek;
     
     if (phase === 'end' && tempStart) {
-      // During end selection, use tempStart as start
       sk = myToKey(tempStart);
-      ek = hoverKey != null ? hoverKey : confirmedEndKey;
+      ek = hoverKey != null ? hoverKey : sk;
     } else {
-      // Use confirmed dates
       sk = confirmedStartKey;
       ek = confirmedEndKey;
     }
@@ -673,8 +666,13 @@ const FACULTY_LIST = {
   ],
 };
 
-function AdminView({activeMonths,rangeLabel,department,semester,analyticsData}){
-  const [tab,setTab]=useState('students');  // Set students as default tab
+function AdminView({activeMonths,rangeLabel,department,semester,analyticsData,activeTab='students',onTabChange}){
+  const tab = activeTab;
+  const setTab = (nextTab) => {
+    if (typeof onTabChange === 'function') {
+      onTabChange(nextTab);
+    }
+  };
   const dc=DEPT_CODE[department];
 
   // Debug: Add this at top of AdminView component to see what data we have
@@ -1697,6 +1695,7 @@ export default function AnalyticsPage({role:propRole}){
   const [endMY,      setEndMY]      = useState({month:2,year:2026});
   const [semester,   setSemester]   = useState(SEMESTER_OPTS[0]);
   const [department, setDepartment] = useState(DEPT_OPTS[0]);
+  const [adminTab,   setAdminTab]   = useState('students');
 
   // Add state for real analytics data
   const [analyticsData, setAnalyticsData] = useState(null);
@@ -1794,95 +1793,14 @@ export default function AnalyticsPage({role:propRole}){
             <div style={{fontSize:11,fontWeight:700,color:'transparent',marginBottom:5}}>—</div>
             <div style={{display:'flex',gap:8}}>
               <button onClick={() => {
-                console.log('=== Excel Export Started ===');
-                try {
-                  const headers = ['Metric', 'Value'];
-                  const rows = [
-                    ['Total Students', '11'],
-                    ['Avg Attendance', '85.5%'],
-                    ['Avg CGPA', '7.8'],
-                    ['Placement Rate', '54.5%'],
-                    ['Export Date', new Date().toLocaleDateString()]
-                  ];
-                  
-                  const csv = [headers.join(','), ...rows.map(r => r.map(v => `"${v}"`).join(','))].join('\n');
-                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                  const url = URL.createObjectURL(blob);
-                  const link = document.createElement('a');
-                  link.href = url;
-                  link.download = `CMS_${role}_students_${new Date().toISOString().split('T')[0]}.csv`;
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                  URL.revokeObjectURL(url);
-                  alert('Excel export completed!');
-                } catch (error) {
-                  console.error('Excel export error:', error);
-                  alert('Excel export failed: ' + error.message);
-                }
+                const activeTabForExport = role === 'admin' ? adminTab : role === 'finance' ? 'collections' : 'overview';
+                exportReport('excel', role, activeMonths, rangeLabel, activeTabForExport, analyticsData);
               }} style={{display:'flex',alignItems:'center',gap:7,height:38,padding:'0 18px',borderRadius:9,border:'none',background:'linear-gradient(135deg,#059669,#047857)',color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer',boxShadow:'0 2px 10px rgba(5,150,105,.4)'}}>
                 <Ico.Download/> Excel
               </button>
               <button onClick={() => {
-                console.log('=== PDF Export Started ===');
-                try {
-                  // Create HTML content that can be saved as HTML and opened in browser
-                  const htmlContent = `
-                    <!DOCTYPE html>
-                    <html>
-                      <head>
-                        <title>CMS ${role.toUpperCase()} Report</title>
-                        <style>
-                          body { font-family: Arial, sans-serif; margin: 20px; background: white; }
-                          h1 { color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 10px; text-align: center; }
-                          h2 { color: #374151; margin-top: 20px; }
-                          .metric { margin: 10px 0; padding: 10px; background: #f9fafb; border-left: 4px solid #2563eb; border-radius: 4px; }
-                          .value { font-weight: bold; color: #1f2937; }
-                          .footer { margin-top: 30px; text-align: center; color: #6b7280; font-size: 12px; }
-                          .header { text-align: center; margin-bottom: 30px; }
-                          .date { background: #e5e7eb; padding: 5px 10px; border-radius: 4px; font-size: 12px; }
-                        </style>
-                      </head>
-                      <body>
-                        <div class="header">
-                          <h1>CMS ${role.toUpperCase()} ANALYTICS REPORT</h1>
-                          <div class="date">Generated on: ${new Date().toLocaleDateString()}</div>
-                        </div>
-                        
-                        <h2>📊 Student Analytics Summary</h2>
-                        <div class="metric">Total Students: <span class="value">11</span></div>
-                        <div class="metric">Average Attendance: <span class="value">85.5%</span></div>
-                        <div class="metric">Average CGPA: <span class="value">7.8</span></div>
-                        <div class="metric">Placement Rate: <span class="value">54.5%</span></div>
-                        
-                        <h2>📈 Performance Metrics</h2>
-                        <div class="metric">Top Performers: <span class="value">Alice Johnson (9.2 CGPA)</span></div>
-                        <div class="metric">At-Risk Students: <span class="value">1 student identified</span></div>
-                        <div class="metric">Perfect Attendance: <span class="value">2 students</span></div>
-                        
-                        <div class="footer">
-                          <p>College Management System Analytics Report</p>
-                          <p>Generated on ${new Date().toLocaleString()}</p>
-                        </div>
-                      </body>
-                    </html>
-                  `;
-                  
-                  // Create blob with HTML MIME type for proper opening
-                  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8;' });
-                  const url = URL.createObjectURL(blob);
-                  const link = document.createElement('a');
-                  link.href = url;
-                  link.download = `CMS_${role}_analytics_${new Date().toISOString().split('T')[0]}.html`;
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                  URL.revokeObjectURL(url);
-                  alert('Report exported successfully! Open the HTML file in your browser to view.');
-                } catch (error) {
-                  console.error('Export error:', error);
-                  alert('Export failed: ' + error.message);
-                }
+                const activeTabForExport = role === 'admin' ? adminTab : role === 'finance' ? 'collections' : 'overview';
+                exportReport('report', role, activeMonths, rangeLabel, activeTabForExport, analyticsData);
               }} style={{display:'flex',alignItems:'center',gap:7,height:38,padding:'0 18px',borderRadius:9,border:'none',background:'linear-gradient(135deg,#dc2626,#b91c1c)',color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer',boxShadow:'0 2px 10px rgba(220,38,38,.4)'}}>
                 <Ico.Download/> Report
               </button>
@@ -1906,7 +1824,7 @@ export default function AnalyticsPage({role:propRole}){
 
       <FilterBar/>
 
-      {role==='admin'   && <AdminView   activeMonths={activeMonths} rangeLabel={rangeLabel} department={department} semester={semester} analyticsData={analyticsData}/>}
+      {role==='admin'   && <AdminView   activeMonths={activeMonths} rangeLabel={rangeLabel} department={department} semester={semester} analyticsData={analyticsData} activeTab={adminTab} onTabChange={setAdminTab}/>}
       {role==='finance' && <FinanceView activeMonths={activeMonths} rangeLabel={rangeLabel} department={department} semester={semester} analyticsData={analyticsData}/>}
       {role==='faculty' && <FacultyView activeMonths={activeMonths} rangeLabel={rangeLabel} department={department} semester={semester}/>}
       {role==='student' && <div style={{textAlign:'center',padding:'60px 0',color:'#9ca3af',fontSize:14}}>Student analytics coming soon</div>}
