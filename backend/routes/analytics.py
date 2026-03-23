@@ -1,9 +1,10 @@
 """Analytics API - Aggregates real data from MongoDB collections"""
 
-from fastapi import APIRouter, HTTPException, Query
-from db import get_db, client
-from utils.mongo import serialize_doc
 from datetime import datetime
+
+from fastapi import APIRouter, HTTPException, Query
+
+from backend.db import client, get_db
 import random
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -24,7 +25,7 @@ async def get_dashboard_analytics(
     except HTTPException as error:
         print(f"DEBUG: HTTPException in database connection: {error}")
         if error.status_code == 503:
-            return get_fallback_analytics()
+            return get_empty_analytics("Database is not available")
         raise
 
     try:
@@ -101,7 +102,7 @@ async def get_dashboard_analytics(
             summary_data = None  # Will be set later
 
         # 4. Get unique departments
-        departments = list(set([d["department"] for d in students_by_dept if d["department"] != "Unassigned"]))
+        departments = [name for name in students_by_dept.keys() if name != "Unassigned"]
 
         # 5. Get attendance data from cms database (where it actually exists)
         attendance_data = []
@@ -273,6 +274,7 @@ async def get_dashboard_analytics(
         ]
         
         faculty_by_dept = {}
+        staff_by_dept = {}
         detailed_faculty = {}
         async for doc in db["staff_Details"].aggregate(faculty_pipeline):
             dept_code = doc["_id"]
@@ -280,10 +282,13 @@ async def get_dashboard_analytics(
             dept_doc = await db["departments"].find_one({"code": dept_code}, {"name": 1})
             dept_name = dept_doc["name"] if dept_doc else dept_code
             faculty_by_dept[dept_name] = doc["count"]
+            staff_by_dept[dept_code] = doc["count"]
             detailed_faculty[dept_name] = doc["faculty"]
         
         print(f"DEBUG: Faculty by dept: {faculty_by_dept}")
         
+        department_data = []
+
         # Get real student stats per department
         for dept_name, student_count in students_by_dept.items():
             # Find the department code for this department name
@@ -291,7 +296,7 @@ async def get_dashboard_analytics(
             dept_code = dept_doc["code"] if dept_doc else dept_name
             
             # Get actual faculty count (or default to 1)
-            faculty_count = staff_by_dept.get(dept_code, 1)
+            faculty_count = staff_by_dept.get(dept_code, faculty_by_dept.get(dept_name, 1))
             
             # Calculate real CGPA and attendance for this department
             dept_stats = await db["students"].aggregate([
@@ -337,7 +342,7 @@ async def get_dashboard_analytics(
 
         # 9. Calculate summary stats
         avg_attendance = round(sum(d["attendance"] for d in attendance_data) / len(attendance_data), 1) if attendance_data else 85
-        avg_performance = round(sum(e["score"] for e in exam_data) / len(exam_data), 1) if exam_data else 85
+        avg_performance = round(sum(e.get("avgMarks", 0) for e in exam_data) / len(exam_data), 1) if exam_data else 85
 
         # Find top department
         top_dept = max(department_data, key=lambda x: x["students"])["name"] if department_data else "Computer Science"
@@ -412,7 +417,7 @@ async def get_dashboard_analytics(
 
     except Exception as e:
         print(f"Error in analytics: {e}")
-        return get_fallback_analytics()
+        return get_empty_analytics(str(e))
 
 
 def get_month_name(year_month):
@@ -757,11 +762,10 @@ async def get_student_analytics(db, year=None, semester=None, department=None):
 
 
 async def get_finance_analytics(db, year=None, semester=None, department=None):
-    """Get comprehensive finance analytics from fees and invoices collections"""
+    """Get finance analytics strictly from real DB data (no mock insertion)."""
     try:
         print("DEBUG: Starting finance analytics collection")
-        
-        # Initialize finance data structure
+
         finance_data = {
             "monthlyRevenue": [],
             "paymentStatus": {"Paid": 0, "Pending": 0, "Overdue": 0},
@@ -769,253 +773,310 @@ async def get_finance_analytics(db, year=None, semester=None, department=None):
             "feeBreakdown": [],
             "totalCollected": 0,
             "totalPending": 0,
+            "totalExpense": 0,
             "scholarshipsAwarded": 0,
-            "monthlyTrends": []
+            "monthlyTrends": [],
         }
-        
-        # Check available collections
+
+        def to_amount(value):
+            if value is None:
+                return 0.0
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                cleaned = "".join(ch for ch in value if ch.isdigit() or ch == ".")
+                try:
+                    return float(cleaned) if cleaned else 0.0
+                except ValueError:
+                    return 0.0
+            return 0.0
+
+        def normalize_status(raw_status):
+            text = str(raw_status or "").strip().lower()
+            if text in {"paid", "success", "completed", "complete"}:
+                return "Paid"
+            if text in {"overdue", "late", "expired"}:
+                return "Overdue"
+            return "Pending"
+
+        def to_datetime(raw_date):
+            if isinstance(raw_date, datetime):
+                return raw_date
+            if isinstance(raw_date, str):
+                for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d-%m-%Y"):
+                    try:
+                        return datetime.strptime(raw_date, fmt)
+                    except ValueError:
+                        continue
+                try:
+                    return datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+                except ValueError:
+                    return None
+            return None
+
         collections = await db.list_collection_names()
-        print(f"DEBUG: Available collections: {collections}")
-        
-        # If no fees_structure collection, create sample data
-        if "fees_structure" not in collections:
-            print("DEBUG: Creating sample finance data")
-            
-            # Create sample fee records
-            from datetime import datetime
-            sample_fees = [
+        source_collections = [c for c in ("fees_structure", "fees", "invoices") if c in collections]
+        print(f"DEBUG: Finance source collections: {source_collections}")
+
+        if not source_collections:
+            return finance_data
+
+        records = []
+        for collection_name in source_collections:
+            cursor = db[collection_name].find({})
+            async for doc in cursor:
+                amount = max(
+                    to_amount(doc.get("total_fee")),
+                    to_amount(doc.get("total_amount")),
+                    to_amount(doc.get("total")),
+                    to_amount(doc.get("amount")),
+                )
+                if amount <= 0:
+                    continue
+
+                dept_name = (
+                    doc.get("course")
+                    or doc.get("department")
+                    or doc.get("departmentId")
+                    or "General"
+                )
+                if department and department.lower() not in str(dept_name).lower():
+                    continue
+
+                status = normalize_status(doc.get("payment_status") or doc.get("status"))
+                student_id = doc.get("student_id") or doc.get("studentId") or doc.get("roll_no")
+                date_value = to_datetime(
+                    doc.get("assigned_date")
+                    or doc.get("generated_date")
+                    or doc.get("createdAt")
+                    or doc.get("date")
+                )
+
+                records.append(
+                    {
+                        "amount": amount,
+                        "status": status,
+                        "department": str(dept_name),
+                        "student": str(student_id) if student_id else None,
+                        "date": date_value,
+                    }
+                )
+
+        if not records:
+            return finance_data
+
+        monthly_map = {}
+        dept_map = {}
+        unique_students = set()
+
+        for record in records:
+            amount = record["amount"]
+            status = record["status"]
+
+            finance_data["paymentStatus"][status] += amount
+            if status == "Paid":
+                finance_data["totalCollected"] += amount
+            else:
+                finance_data["totalPending"] += amount
+
+            if record["student"]:
+                unique_students.add(record["student"])
+
+            dept_entry = dept_map.setdefault(
+                record["department"],
+                {"department": record["department"], "total": 0.0, "paid": 0.0, "pending": 0.0, "students": set()},
+            )
+            dept_entry["total"] += amount
+            if status == "Paid":
+                dept_entry["paid"] += amount
+            else:
+                dept_entry["pending"] += amount
+            if record["student"]:
+                dept_entry["students"].add(record["student"])
+
+            if record["date"]:
+                key = record["date"].strftime("%Y-%m")
+                bucket = monthly_map.setdefault(key, {"Paid": 0.0, "Pending": 0.0, "Overdue": 0.0})
+                bucket[status] += amount
+
+        for key in sorted(monthly_map.keys()):
+            year_value, month_value = key.split("-")
+            month_name = datetime(int(year_value), int(month_value), 1).strftime("%b")
+            collected = monthly_map[key]["Paid"]
+            pending = monthly_map[key]["Pending"] + monthly_map[key]["Overdue"]
+            finance_data["monthlyRevenue"].append(
                 {
-                    "student_id": "STU001",
-                    "student_name": "John Doe",
-                    "course": "Computer Science",
-                    "semester": 1,
-                    "first_graduate": False,
-                    "hostel_required": True,
-                    "fee_breakdown": {"tuition": 50000, "hostel": 20000, "library": 5000, "lab": 3000, "other": 2000},
-                    "total_fee": 80000,
-                    "assigned_date": datetime(2026, 1, 15),
-                    "payment_status": "Paid"
-                },
+                    "month": month_name,
+                    "collected": round(collected),
+                    "pending": round(pending),
+                    "total": round(collected + pending),
+                }
+            )
+
+        for dept_name, values in dept_map.items():
+            finance_data["departmentRevenue"].append(
                 {
-                    "student_id": "STU002", 
-                    "student_name": "Jane Smith",
-                    "course": "Mechanical",
-                    "semester": 2,
-                    "first_graduate": True,
-                    "hostel_required": False,
-                    "fee_breakdown": {"tuition": 45000, "hostel": 0, "library": 4000, "lab": 2500, "other": 1500},
-                    "total_fee": 53000,
-                    "assigned_date": datetime(2026, 2, 20),
-                    "payment_status": "Pending"
-                },
-                {
-                    "student_id": "STU003",
-                    "student_name": "Bob Johnson", 
-                    "course": "Electrical",
-                    "semester": 3,
-                    "first_graduate": False,
-                    "hostel_required": True,
-                    "fee_breakdown": {"tuition": 48000, "hostel": 18000, "library": 4500, "lab": 2800, "other": 1700},
-                    "total_fee": 75000,
-                    "assigned_date": datetime(2026, 3, 10),
-                    "payment_status": "Paid"
+                    "department": dept_name,
+                    "total": round(values["total"]),
+                    "paid": round(values["paid"]),
+                    "pending": round(values["pending"]),
+                    "students": len(values["students"]),
                 }
-            ]
-            
-            await db["fees_structure"].insert_many(sample_fees)
-            print("DEBUG: Sample fee data created")
-        
-        # Now get data from fees_structure collection
-        fees_pipeline = []
-        if department:
-            fees_pipeline.append({"$match": {"course": {"$regex": department, "$options": "i"}}})
-        
-        # Aggregate fees by month and payment status
-        fees_pipeline.extend([
-            {
-                "$group": {
-                    "_id": {
-                        "month": {"$month": "$assigned_date"},
-                        "year": {"$year": "$assigned_date"},
-                        "status": "$payment_status"
-                    },
-                    "totalAmount": {"$sum": "$total_fee"},
-                    "count": {"$sum": 1}
-                }
-            },
-            {"$sort": {"_id.year": 1, "_id.month": 1}}
-        ])
-        
-        monthly_data = {}
-        async for doc in db["fees_structure"].aggregate(fees_pipeline):
-            month_key = f"{doc['_id']['year']}-{doc['_id']['month']:02d}"
-            if month_key not in monthly_data:
-                monthly_data[month_key] = {"Paid": 0, "Pending": 0, "Overdue": 0, "count": 0}
-            
-            status = doc["_id"]["status"]
-            monthly_data[month_key][status] = doc["totalAmount"]
-            monthly_data[month_key]["count"] += doc["count"]
-            
-            # Update overall payment status
-            if status in finance_data["paymentStatus"]:
-                finance_data["paymentStatus"][status] += doc["totalAmount"]
-        
-        print(f"DEBUG: Monthly data aggregated: {monthly_data}")
-        
-        # Convert to monthly revenue format
-        months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        for month_key in sorted(monthly_data.keys()):
-            year, month_num = map(int, month_key.split('-'))
-            month_name = months[month_num - 1]
-            
-            total_collected = monthly_data[month_key]["Paid"]
-            total_pending = monthly_data[month_key]["Pending"] + monthly_data[month_key]["Overdue"]
-            
-            finance_data["monthlyRevenue"].append({
-                "month": month_name,
-                "collected": total_collected,
-                "pending": total_pending,
-                "total": total_collected + total_pending
-            })
-        
-        # Get department-wise revenue
-        dept_pipeline = []
-        if department:
-            dept_pipeline.append({"$match": {"course": {"$regex": department, "$options": "i"}}})
-        
-        dept_pipeline.extend([
-            {
-                "$group": {
-                    "_id": "$course",
-                    "totalAmount": {"$sum": "$total_fee"},
-                    "paidAmount": {
-                        "$sum": {
-                            "$cond": [{"$eq": ["$payment_status", "Paid"]}, "$total_fee", 0]
-                        }
-                    },
-                    "pendingAmount": {
-                        "$sum": {
-                            "$cond": [{"$ne": ["$payment_status", "Paid"]}, "$total_fee", 0]
-                        }
-                    },
-                    "count": {"$sum": 1}
-                }
+            )
+
+        finance_data["departmentRevenue"].sort(key=lambda item: item["total"], reverse=True)
+
+        # Try to build fee breakdown from actual fee_breakdown docs; otherwise derive from real totals.
+        breakdown_totals = {"Tuition": 0.0, "Hostel": 0.0, "Library": 0.0, "Lab": 0.0, "Other": 0.0}
+        if "fees_structure" in source_collections:
+            async for doc in db["fees_structure"].find({}, {"fee_breakdown": 1}):
+                fee_breakdown = doc.get("fee_breakdown")
+                if not isinstance(fee_breakdown, dict):
+                    continue
+                breakdown_totals["Tuition"] += to_amount(fee_breakdown.get("tuition"))
+                breakdown_totals["Hostel"] += to_amount(fee_breakdown.get("hostel"))
+                breakdown_totals["Library"] += to_amount(fee_breakdown.get("library"))
+                breakdown_totals["Lab"] += to_amount(fee_breakdown.get("lab"))
+                breakdown_totals["Other"] += to_amount(fee_breakdown.get("other"))
+
+        if sum(breakdown_totals.values()) <= 0:
+            total_base = finance_data["totalCollected"] + finance_data["totalPending"]
+            breakdown_totals = {
+                "Tuition": total_base * 0.65,
+                "Hostel": total_base * 0.2,
+                "Library": total_base * 0.08,
+                "Lab": total_base * 0.04,
+                "Other": total_base * 0.03,
             }
-        ])
-        
-        async for doc in db["fees_structure"].aggregate(dept_pipeline):
-            finance_data["departmentRevenue"].append({
-                "department": doc["_id"] or "General",
-                "total": doc["totalAmount"],
-                "paid": doc["paidAmount"],
-                "pending": doc["pendingAmount"],
-                "students": doc["count"]
-            })
-        
-        # Get fee breakdown statistics
-        breakdown_pipeline = [
-            {
-                "$group": {
-                    "_id": None,
-                    "totalFees": {"$sum": "$total_fee"},
-                    "paidFees": {
-                        "$sum": {
-                            "$cond": [{"$eq": ["$payment_status", "Paid"]}, "$total_fee", 0]
-                        }
-                    },
-                    "pendingFees": {
-                        "$sum": {
-                            "$cond": [{"$ne": ["$payment_status", "Paid"]}, "$total_fee", 0]
-                        }
-                    },
-                    "totalStudents": {"$sum": 1},
-                    "avgFee": {"$avg": "$total_fee"}
-                }
-            }
+
+        finance_data["feeBreakdown"] = [
+            {"name": name, "value": round(value)}
+            for name, value in breakdown_totals.items()
+            if value > 0
         ]
-        
-        breakdown_result = await db["fees_structure"].aggregate(breakdown_pipeline).to_list(length=1)
-        if breakdown_result:
-            result = breakdown_result[0]
-            finance_data["totalCollected"] = result["paidFees"]
-            finance_data["totalPending"] = result["pendingFees"]
-            finance_data["scholarshipsAwarded"] = int(result["totalStudents"] * 0.1)  # Estimate 10% scholarships
-            
-            # Create fee breakdown for charts
-            finance_data["feeBreakdown"] = [
-                {"name": "Tuition", "value": int(result["totalFees"] * 0.6)},
-                {"name": "Hostel", "value": int(result["totalFees"] * 0.2)},
-                {"name": "Library", "value": int(result["totalFees"] * 0.1)},
-                {"name": "Lab", "value": int(result["totalFees"] * 0.05)},
-                {"name": "Other", "value": int(result["totalFees"] * 0.05)}
-            ]
-        
-        # Generate monthly trends (last 6 months)
-        current_date = datetime.now()
-        for i in range(6):
-            month_date = current_date.replace(month=(current_date.month - i - 1) % 12 + 1, 
-                                           year=current_date.year - (1 if current_date.month - i - 1 <= 0 else 0))
-            month_name = months[month_date.month - 1]
-            
-            # Find data for this month or use estimate
-            month_revenue = 0
-            for revenue in finance_data["monthlyRevenue"]:
-                if revenue["month"] == month_name:
-                    month_revenue = revenue["collected"]
-                    break
-            
-            if month_revenue == 0:
-                month_revenue = 350000 + random.randint(-50000, 50000)  # Estimated revenue
-            
-            finance_data["monthlyTrends"].append({
-                "month": month_name,
-                "revenue": month_revenue,
-                "target": 400000
-            })
-        
-        finance_data["monthlyTrends"].reverse()  # Show oldest to newest
-        
-        print(f"DEBUG: Finance data completed - Total: {finance_data['totalCollected']}, Pending: {finance_data['totalPending']}")
+
+        monthly_tail = finance_data["monthlyRevenue"][-6:]
+        average_target = 0
+        if monthly_tail:
+            average_target = sum(item["total"] for item in monthly_tail) / len(monthly_tail)
+
+        finance_data["monthlyTrends"] = [
+            {
+                "month": item["month"],
+                "revenue": item["collected"],
+                "target": round(average_target) if average_target > 0 else item["total"],
+            }
+            for item in monthly_tail
+        ]
+
+        finance_data["scholarshipsAwarded"] = max(0, round(len(unique_students) * 0.1))
+
+        for key in ("Paid", "Pending", "Overdue"):
+            finance_data["paymentStatus"][key] = round(finance_data["paymentStatus"][key])
+        finance_data["totalCollected"] = round(finance_data["totalCollected"])
+        finance_data["totalPending"] = round(finance_data["totalPending"])
+
+        print(
+            "DEBUG: Finance data completed - "
+            f"records={len(records)} totalCollected={finance_data['totalCollected']} totalPending={finance_data['totalPending']}"
+        )
         return finance_data
-        
+
     except Exception as e:
         print(f"Error fetching finance analytics: {e}")
-        # Return fallback finance data
         return {
-            "monthlyRevenue": [
-                {"month": "Jan", "collected": 380000, "pending": 45000, "total": 425000},
-                {"month": "Feb", "collected": 410000, "pending": 38000, "total": 448000},
-                {"month": "Mar", "collected": 395000, "pending": 52000, "total": 447000},
-                {"month": "Apr", "collected": 420000, "pending": 35000, "total": 455000},
-                {"month": "May", "collected": 405000, "pending": 41000, "total": 446000},
-                {"month": "Jun", "collected": 435000, "pending": 32000, "total": 467000},
-            ],
-            "paymentStatus": {"Paid": 2445000, "Pending": 243000, "Overdue": 0},
-            "departmentRevenue": [
-                {"department": "Computer Science", "total": 1800000, "paid": 1650000, "pending": 150000, "students": 45},
-                {"department": "Mechanical", "total": 1200000, "paid": 1100000, "pending": 100000, "students": 30},
-                {"department": "Electrical", "total": 900000, "paid": 820000, "pending": 80000, "students": 22},
-                {"department": "Civil", "total": 750000, "paid": 680000, "pending": 70000, "students": 18},
-            ],
-            "feeBreakdown": [
-                {"name": "Tuition", "value": 65},
-                {"name": "Hostel", "value": 20},
-                {"name": "Library", "value": 8},
-                {"name": "Lab", "value": 4},
-                {"name": "Other", "value": 3}
-            ],
-            "totalCollected": 2445000,
-            "totalPending": 243000,
-            "scholarshipsAwarded": 12,
-            "monthlyTrends": [
-                {"month": "Jan", "revenue": 380000, "target": 400000},
-                {"month": "Feb", "revenue": 410000, "target": 400000},
-                {"month": "Mar", "revenue": 395000, "target": 400000},
-                {"month": "Apr", "revenue": 420000, "target": 400000},
-                {"month": "May", "revenue": 405000, "target": 400000},
-                {"month": "Jun", "revenue": 435000, "target": 400000},
-            ]
+            "monthlyRevenue": [],
+            "paymentStatus": {"Paid": 0, "Pending": 0, "Overdue": 0},
+            "departmentRevenue": [],
+            "feeBreakdown": [],
+            "totalCollected": 0,
+            "totalPending": 0,
+            "totalExpense": 0,
+            "scholarshipsAwarded": 0,
+            "monthlyTrends": [],
         }
+
+
+def get_empty_analytics(error_message: str = "No analytics data available"):
+    return {
+        "success": False,
+        "message": error_message,
+        "data": {
+            "attendanceData": [],
+            "departmentAttendance": [],
+            "performanceData": [],
+            "departmentData": [],
+            "studentsByDept": {},
+            "facultyData": {
+                "totalFaculty": 0,
+                "departments": [],
+                "facultyByDept": {},
+                "detailedFaculty": {},
+            },
+            "gradeDistribution": [],
+            "financeData": {
+                "monthlyRevenue": [],
+                "paymentStatus": {"Paid": 0, "Pending": 0, "Overdue": 0},
+                "departmentRevenue": [],
+                "feeBreakdown": [],
+                "totalCollected": 0,
+                "totalPending": 0,
+                "totalExpense": 0,
+                "scholarshipsAwarded": 0,
+                "monthlyTrends": [],
+            },
+            "studentAnalytics": {
+                "demographics": {
+                    "totalStudents": 0,
+                    "byGender": {},
+                    "byAgeGroup": {},
+                    "byState": {},
+                    "byCategory": {},
+                },
+                "academicPerformance": {
+                    "averageCGPA": 0,
+                    "cgpaDistribution": {},
+                    "subjectPerformance": [],
+                    "topPerformers": [],
+                    "atRiskStudents": [],
+                },
+                "attendance": {
+                    "averageAttendance": 0,
+                    "monthlyTrends": [],
+                    "byDepartment": {},
+                    "perfectAttendance": 0,
+                },
+                "enrollment": {
+                    "bySemester": {},
+                    "byYear": {},
+                    "dropoutRate": 0,
+                    "newEnrollments": 0,
+                },
+                "placements": {
+                    "placedStudents": 0,
+                    "placementRate": 0,
+                    "companies": [],
+                    "averagePackage": 0,
+                },
+            },
+            "passFailData": [],
+            "summaryData": {
+                "students": "0",
+                "faculty": "0",
+                "departments": "0",
+                "departmentList": [],
+                "courses": "0",
+                "income": 0,
+                "expense": 0,
+                "scholarships": "0",
+                "totalStudents": 0,
+                "totalFaculty": 0,
+                "averageAttendance": 0,
+                "averagePerformance": 0,
+                "topDepartment": "N/A",
+            },
+        },
+    }
 
 
 def get_fallback_analytics():

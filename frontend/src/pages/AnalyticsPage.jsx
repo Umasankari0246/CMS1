@@ -1253,8 +1253,17 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
     }
   }, [useRealData, financeData, activeMonths, dc]);
   
-  // Weekly collection data (still using mock data as not available in backend)
-  const fiColData = useMemo(() => activeMonths.flatMap(m => (financeColByMonth[m] ?? []).map(d => ({...d, week: `${m} ${d.week}`}))), [activeMonths]);
+  // Use backend monthly revenue when available; otherwise keep existing local fallback.
+  const fiColData = useMemo(() => {
+    if (useRealData && financeData?.monthlyRevenue) {
+      return financeData.monthlyRevenue.map((item) => ({
+        week: item.month,
+        collected: item.collected || 0,
+        target: item.total || item.collected || 0,
+      }));
+    }
+    return activeMonths.flatMap(m => (financeColByMonth[m] ?? []).map(d => ({...d, week: `${m} ${d.week}`})));
+  }, [useRealData, financeData, activeMonths]);
   const filteredPending  = pendingFilter==='all'?pendingStudents:pendingFilter==='overdue'?pendingStudents.filter(s=>s.days<0):pendingStudents.filter(s=>s.days>=0);
   const deptFilteredPending = dc?filteredPending.filter(s=>s.dept===dc):filteredPending;
 

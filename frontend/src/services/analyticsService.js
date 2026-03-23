@@ -26,7 +26,7 @@ export async function getRealAnalyticsData(year = null, semester = null, departm
     
     console.log('Analytics response:', result);
     
-    if (result.success && result.data) {
+    if (result && result.data) {
       console.log('Analytics data keys:', Object.keys(result.data));
       console.log('Student analytics present:', !!result.data.studentAnalytics);
       return result.data;
