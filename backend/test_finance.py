@@ -1,5 +1,5 @@
 import asyncio
-from backend.db import get_db
+from db import get_db
 from datetime import datetime
 
 async def test_finance_data():
