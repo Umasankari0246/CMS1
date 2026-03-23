@@ -704,18 +704,24 @@ function AdminView({activeMonths,rangeLabel,department,semester,analyticsData}){
     departmentData: analyticsData.departmentData || [],
     facultyData: analyticsData.facultyData || {},
     studentAnalytics: analyticsData.studentAnalytics || {},
+    realDeptAttendance: analyticsData.studentAnalytics?.attendance?.byDepartment || {},
+    passFailData: analyticsData.passFailData || []  // Use backend pass/fail data
   } : null;
 
   const aAttData  = useMemo(()=>{
     if (useRealData && realData.departmentAttendance && realData.departmentAttendance.length > 0) {
       return realData.departmentAttendance.map(d => ({dept: d.department, avg: d.attendance || 0}));
+    } else if (useRealData && realData.realDeptAttendance) {
+      return Object.entries(realData.realDeptAttendance).map(([dept, att]) => ({dept, avg: att}));
     } else if (useRealData && realData.attendanceData) {
       return realData.attendanceData.map(d => ({dept: d.department || 'All', avg: d.attendance || 0}));
     }
     return avgAdminAtt(activeMonths);
   },[activeMonths, useRealData, realData]);
   
-  const aExamData = useMemo(()=>useRealData && realData.examData ? 
+  const aExamData = useMemo(()=>useRealData && realData.passFailData && realData.passFailData.length > 0 ? 
+    realData.passFailData.map(d => ({dept: d.dept, pass: d.pass, fail: d.fail})) :
+    useRealData && realData.examData ? 
     realData.examData.map(d => ({dept: d.department || 'All', pass: d.passRate || 0, fail: 100 - (d.passRate || 0)})) :
     avgAdminExam(activeMonths),[activeMonths, useRealData, realData]);
 
@@ -789,15 +795,14 @@ function AdminView({activeMonths,rangeLabel,department,semester,analyticsData}){
   const alerts=[];
   rankingData.forEach(d=>{if(d.att<80)alerts.push(`${d.dept} attendance ${d.att}%`);});
   rankingData.forEach(d=>{if(d.pass<80)alerts.push(`${d.dept} pass rate ${d.pass}%`);});
-  const deptPieData=useRealData && realData.studentsByDept ? 
-    Object.entries(realData.studentsByDept).map(([k,v])=>({name:k,value:v})) :
-    Object.entries(dc?{[dc]:studentsByDept[dc]}:studentsByDept).map(([k,v])=>({name:k,value:v}));
-  const yearPieData = useMemo(() => {
-  if (useRealData && realData.studentAnalytics?.enrollment?.byYear) {
-    return Object.entries(realData.studentAnalytics.enrollment.byYear).map(([name, value]) => ({name, value}));
-  }
-  return Object.entries(studentsByYear).map(([k,v])=>({name:k,value:v}));
-}, [useRealData, realData]);
+  const deptPieData = useMemo(() => {
+    if (useRealData && realData.studentsByDept && Object.keys(realData.studentsByDept).length > 0) {
+      return Object.entries(realData.studentsByDept).map(([name, value]) => ({name, value}));
+    } else if (useRealData && realData.studentAnalytics?.demographics?.byDepartment) {
+      return Object.entries(realData.studentAnalytics.demographics.byDepartment).map(([name, value]) => ({name, value}));
+    }
+    return Object.entries(dc?{[dc]:studentsByDept[dc]}:studentsByDept).map(([k,v])=>({name:DEPT_FULL[k]??k,value:v}));
+  }, [useRealData, realData, dc]);
   
   // Debug logging for charts
   console.log('=== Chart Data Debug ===');
