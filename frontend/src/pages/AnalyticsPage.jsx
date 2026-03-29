@@ -1183,6 +1183,18 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
   const [pendingFilter,setPendingFilter]=useState('all');
   const dc=DEPT_CODE[department];
   const lastMonth=activeMonths[activeMonths.length-1];
+  const matchesSelectedDepartment = (value) => {
+    if (!dc) return true;
+    const raw = String(value || '').trim().toLowerCase();
+    const selectedName = String(department || '').trim().toLowerCase();
+    const selectedCode = String(dc || '').trim().toLowerCase();
+    return (
+      raw === selectedCode ||
+      raw.includes(selectedCode) ||
+      raw === selectedName ||
+      raw.includes(selectedName)
+    );
+  };
   
   // Use real finance data if available, otherwise fall back to mock data
   const useRealData = analyticsData && analyticsData.financeData && Object.keys(analyticsData.financeData).length > 0;
@@ -1191,11 +1203,12 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
   // Calculate finance cards from real data
   const fiCards = useMemo(() => {
     if (useRealData && financeData) {
+      const overdueAmount = Number(financeData.paymentStatus?.Overdue || 0);
       return {
-        collected: financeData.totalCollected ? fmtCr(financeData.totalCollected) : '—',
-        pending: financeData.totalPending ? fmtCr(financeData.totalPending) : '—',
-        scholarships: financeData.scholarshipsAwarded ? financeData.scholarshipsAwarded.toString() : '—',
-        late: '—', // Not available in current finance data
+        collected: fmtCr(Number(financeData.totalCollected || 0)),
+        pending: fmtCr(Number(financeData.totalPending || 0)),
+        scholarships: String(financeData.scholarshipsAwarded || 0),
+        late: fmtCr(overdueAmount),
       };
     } else {
       // Fallback to mock data
@@ -1210,7 +1223,7 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
   
   // Use real monthly revenue data or fallback
   const monthlyTrendData = useMemo(() => {
-    if (useRealData && financeData?.monthlyTrends) {
+    if (useRealData && Array.isArray(financeData?.monthlyTrends) && financeData.monthlyTrends.length > 0) {
       return financeData.monthlyTrends.map(item => ({
         month: item.month,
         collected: item.revenue,
@@ -1230,10 +1243,11 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
   const fiPieData = useMemo(() => {
     if (useRealData && financeData?.paymentStatus) {
       const total = Object.values(financeData.paymentStatus).reduce((sum, val) => sum + val, 0);
-      return Object.entries(financeData.paymentStatus).map(([name, value]) => ({
+      const mapped = Object.entries(financeData.paymentStatus).map(([name, value]) => ({
         name,
         value: total > 0 ? Math.round((value / total) * 100) : 0
       }));
+      return mapped.some((x) => x.value > 0) ? mapped : avgFinancePie(activeMonths);
     } else {
       return avgFinancePie(activeMonths);
     }
@@ -1241,21 +1255,22 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
   
   // Use real department revenue data or fallback
   const fiDeptData = useMemo(() => {
-    if (useRealData && financeData?.departmentRevenue) {
-      return financeData.departmentRevenue.map(dept => ({
+    if (useRealData && Array.isArray(financeData?.departmentRevenue) && financeData.departmentRevenue.length > 0) {
+      const mapped = financeData.departmentRevenue.map(dept => ({
         dept: dept.department,
-        paid: dept.paid,
-        pending: dept.pending,
-        overdue: 0 // Not available in current data
+        paid: Number(dept.paid || 0),
+        pending: Number(dept.pending || 0),
+        overdue: Number(dept.overdue || 0)
       }));
+      return dc ? mapped.filter(d => matchesSelectedDepartment(d.dept)) : mapped;
     } else {
       return dc ? avgFinanceDept(activeMonths).filter(d => d.dept === dc) : avgFinanceDept(activeMonths);
     }
-  }, [useRealData, financeData, activeMonths, dc]);
+  }, [useRealData, financeData, activeMonths, dc, department]);
   
   // Use backend monthly revenue when available; otherwise keep existing local fallback.
   const fiColData = useMemo(() => {
-    if (useRealData && financeData?.monthlyRevenue) {
+    if (useRealData && Array.isArray(financeData?.monthlyRevenue) && financeData.monthlyRevenue.length > 0) {
       return financeData.monthlyRevenue.map((item) => ({
         week: item.month,
         collected: item.collected || 0,
@@ -1264,15 +1279,112 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
     }
     return activeMonths.flatMap(m => (financeColByMonth[m] ?? []).map(d => ({...d, week: `${m} ${d.week}`})));
   }, [useRealData, financeData, activeMonths]);
-  const filteredPending  = pendingFilter==='all'?pendingStudents:pendingFilter==='overdue'?pendingStudents.filter(s=>s.days<0):pendingStudents.filter(s=>s.days>=0);
-  const deptFilteredPending = dc?filteredPending.filter(s=>s.dept===dc):filteredPending;
 
-  const semFeeDetails = [
-    {sem:'Sem 1',students:720,collected:2800000,pending:200000,rate:'93%'},
-    {sem:'Sem 2',students:680,collected:3100000,pending:100000,rate:'97%'},
-    {sem:'Sem 3',students:620,collected:2900000,pending:200000,rate:'94%'},
-    {sem:'Sem 4',students:560,collected:3400000,pending:100000,rate:'97%'},
-  ].filter(s=>semester==='Semester 4 (Current)'?s.sem==='Sem 4':true);
+  const pendingRows = useMemo(() => {
+    if (useRealData && Array.isArray(financeData?.pendingDetails) && financeData.pendingDetails.length > 0) {
+      return financeData.pendingDetails.map((row) => ({
+        name: row.name || 'Unknown',
+        rollNo: row.rollNo || 'N/A',
+        dept: row.dept || 'General',
+        amount: `₹${Number(row.amount || 0).toLocaleString()}`,
+        due: row.due || 'N/A',
+        days: typeof row.days === 'number' ? row.days : 999,
+        sem: row.sem || 'N/A',
+      }));
+    }
+    return pendingStudents;
+  }, [useRealData, financeData]);
+
+  const filteredPending = useMemo(() => {
+    if (pendingFilter === 'all') return pendingRows;
+    if (pendingFilter === 'overdue') return pendingRows.filter((s) => s.days < 0);
+    return pendingRows.filter((s) => s.days >= 0);
+  }, [pendingRows, pendingFilter]);
+
+  const deptFilteredPending = useMemo(() => {
+    if (!dc) return filteredPending;
+    return filteredPending.filter((s) => matchesSelectedDepartment(s.dept));
+  }, [filteredPending, dc, department]);
+
+  const overdueTrendData = useMemo(() => {
+    if (useRealData && Array.isArray(financeData?.overdueTrend) && financeData.overdueTrend.length > 0) {
+      return financeData.overdueTrend;
+    }
+    return activeMonths.map(mn => ({month:mn,overdue:(financeDeptByMonth[mn]??[]).reduce((s,d)=>s+d.overdue,0)}));
+  }, [useRealData, financeData, activeMonths]);
+
+  const expenseTrendData = useMemo(() => {
+    if (useRealData && Array.isArray(financeData?.expenseTrends) && financeData.expenseTrends.length > 0) {
+      const trendMap = new Map(financeData.expenseTrends.map((x) => [x.month, Number(x.expense || 0)]));
+      return activeMonths.map((mn) => ({
+        month: mn,
+        income: (incomeExpenseByMonth[mn]?.income ?? 0),
+        expense: trendMap.get(mn) ?? 0,
+        net: (incomeExpenseByMonth[mn]?.income ?? 0) - (trendMap.get(mn) ?? 0),
+      }));
+    }
+    return activeMonths.map((mn) => {
+      const base = incomeExpenseByMonth[mn] ?? { income: 0, expense: 0 };
+      return { month: mn, ...base, net: base.income - base.expense };
+    });
+  }, [useRealData, financeData, activeMonths]);
+
+  const expenseBreakdownData = useMemo(() => {
+    if (useRealData && Array.isArray(financeData?.expenseBreakdown) && financeData.expenseBreakdown.length > 0) {
+      return financeData.expenseBreakdown;
+    }
+    return expenseBreakdown;
+  }, [useRealData, financeData]);
+
+  const scholarshipDeptData = useMemo(() => {
+    if (useRealData && Array.isArray(financeData?.scholarshipByDepartment) && financeData.scholarshipByDepartment.length > 0) {
+      const mapped = financeData.scholarshipByDepartment.map((d) => ({
+        dept: d.dept,
+        merit: Number(d.merit || 0),
+        needBased: Number(d.needBased || 0),
+        sports: Number(d.sports || 0),
+        totalStudents: Number(d.totalStudents || 0),
+      }));
+      return dc ? mapped.filter((d) => matchesSelectedDepartment(d.dept)) : mapped;
+    }
+    return dc ? scholarshipByDept.filter(d=>d.dept===dc).map((d) => ({...d, totalStudents: studentsByDept[d.dept] || 0})) : scholarshipByDept.map((d) => ({...d, totalStudents: studentsByDept[d.dept] || 0}));
+  }, [useRealData, financeData, dc, department]);
+
+  const scholarshipTypeData = useMemo(() => {
+    if (useRealData && Array.isArray(financeData?.scholarshipTypeSummary) && financeData.scholarshipTypeSummary.length > 0) {
+      return financeData.scholarshipTypeSummary;
+    }
+    return [
+      {name:'Merit',value:scholarshipDeptData.reduce((s,d)=>s+d.merit,0)},
+      {name:'Need-based',value:scholarshipDeptData.reduce((s,d)=>s+d.needBased,0)},
+      {name:'Sports',value:scholarshipDeptData.reduce((s,d)=>s+d.sports,0)}
+    ];
+  }, [useRealData, financeData, scholarshipDeptData]);
+
+  const semFeeDetails = useMemo(() => {
+    if (useRealData && Array.isArray(financeData?.departmentRevenue) && financeData.departmentRevenue.length > 0) {
+      return financeData.departmentRevenue.slice(0, 6).map((d, idx) => {
+        const total = Number(d.total || 0);
+        const paid = Number(d.paid || 0);
+        const pending = Number(d.pending || 0);
+        const rate = total > 0 ? `${Math.round((paid / total) * 100)}%` : '0%';
+        return {
+          sem: `Dept ${idx + 1}`,
+          students: Number(d.students || 0),
+          collected: paid,
+          pending,
+          rate,
+        };
+      });
+    }
+
+    return [
+      {sem:'Sem 1',students:720,collected:2800000,pending:200000,rate:'93%'},
+      {sem:'Sem 2',students:680,collected:3100000,pending:100000,rate:'97%'},
+      {sem:'Sem 3',students:620,collected:2900000,pending:200000,rate:'94%'},
+      {sem:'Sem 4',students:560,collected:3400000,pending:100000,rate:'97%'},
+    ].filter(s=>semester==='Semester 4 (Current)'?s.sem==='Sem 4':true);
+  }, [useRealData, financeData, semester]);
 
   const TABS=[{id:'collections',icon:'💰',label:'Collections'},{id:'pending',icon:'⏳',label:'Pending & Overdue'},{id:'expenses',icon:'📉',label:'Expenses'},{id:'scholarships',icon:'🎓',label:'Scholarships'}];
 
@@ -1358,10 +1470,10 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
       {tab==='pending'&&(
         <>
           <div style={{display:'flex',gap:16,marginBottom:20,flexWrap:'wrap'}}>
-            <SCard label="Total Pending"    value={`${pendingStudents.length}`}                      sub="Students"     tone="orange" icon="⏳"/>
-            <SCard label="Overdue"          value={`${pendingStudents.filter(s=>s.days<0).length}`}  sub="Past due date" tone="red"   icon="🔴"/>
-            <SCard label="Due This Week"    value={`${pendingStudents.filter(s=>s.days>=0&&s.days<=7).length}`} sub="7 days or less" tone="amber" icon="⚠️"/>
-            <SCard label="Total Overdue Amt"value="₹2.56L"                                           sub="Combined"     tone="purple" icon="💸"/>
+            <SCard label="Total Pending"    value={`${pendingRows.length}`}                      sub="Students"     tone="orange" icon="⏳"/>
+            <SCard label="Overdue"          value={`${pendingRows.filter(s=>s.days<0).length}`}  sub="Past due date" tone="red"   icon="🔴"/>
+            <SCard label="Due This Week"    value={`${pendingRows.filter(s=>s.days>=0&&s.days<=7).length}`} sub="7 days or less" tone="amber" icon="⚠️"/>
+            <SCard label="Total Overdue Amt"value={fmtCr(fiDeptData.reduce((sum, d) => sum + (Number(d.overdue || 0)), 0))} sub="Combined" tone="purple" icon="💸"/>
           </div>
 
           <CC title="⏳ Pending Fee Details" subtitle="Student-wise pending and overdue fees"
@@ -1400,7 +1512,7 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
             </CC>
             <CC title="📈 Overdue Trend" subtitle="Monthly overdue amount trend">
               <ResponsiveContainer width="100%" height={H}>
-                <LineChart data={activeMonths.map(mn=>({month:mn,overdue:(financeDeptByMonth[mn]??[]).reduce((s,d)=>s+d.overdue,0)}))} margin={{top:4,right:4,left:-20,bottom:0}}>
+                <LineChart data={overdueTrendData} margin={{top:4,right:4,left:-20,bottom:0}}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/><XAxis dataKey="month" tick={{fontSize:10,fill:'#9ca3af'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:10,fill:'#9ca3af'}} axisLine={false} tickLine={false}/><Tooltip {...TT}/>
                   <Line type="monotone" dataKey="overdue" name="Overdue Count" stroke={C.red} strokeWidth={2.5} dot={(p)=>{const inR=activeMonths.includes(p.payload?.month);return<circle key={p.cx} cx={p.cx} cy={p.cy} r={inR?6:3} fill={inR?C.orange:C.red} stroke="#fff" strokeWidth={2}/>;}}/>
                 </LineChart>
@@ -1414,7 +1526,13 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
         <>
           <div style={{display:'flex',gap:16,marginBottom:24,flexWrap:'wrap'}}>
             {(()=>{
-              const totals=activeMonths.reduce((acc,m)=>{const d=incomeExpenseByMonth[m]??{income:0,expense:0};return{income:acc.income+d.income,expense:acc.expense+d.expense}},{income:0,expense:0});
+              const totals = expenseTrendData.reduce(
+                (acc, row) => ({
+                  income: acc.income + Number(row.income || 0),
+                  expense: acc.expense + Number(row.expense || 0),
+                }),
+                { income: 0, expense: 0 }
+              );
               return(
                 <>
                   <SCard label="Total Expenses"    value={fmtCr(totals.expense)}                    sub={rangeLabel}    tone="orange" icon="📉"/>
@@ -1429,14 +1547,14 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20,marginBottom:20}}>
             <CC title="💸 Expense Breakdown" subtitle="Category distribution">
               <ResponsiveContainer width="100%" height={H2}>
-                <PieChart><Pie data={expenseBreakdown} cx="50%" cy="50%" outerRadius={85} dataKey="value" label={<PieLabelInside labelType="pct"/>} labelLine={false}>
-                  {expenseBreakdown.map((_,i)=><Cell key={i} fill={[C.blue,C.orange,C.red,C.purple,C.teal][i]}/>)}
+                <PieChart><Pie data={expenseBreakdownData} cx="50%" cy="50%" outerRadius={85} dataKey="value" label={<PieLabelInside labelType="pct"/>} labelLine={false}>
+                  {expenseBreakdownData.map((_,i)=><Cell key={i} fill={[C.blue,C.orange,C.red,C.purple,C.teal][i]}/>)}
                 </Pie><Tooltip {...TT} formatter={v=>`${v}%`}/></PieChart>
               </ResponsiveContainer>
             </CC>
             <CC title="📊 Income vs Expense Trend" subtitle="Monthly surplus / deficit">
               <ResponsiveContainer width="100%" height={H2}>
-                <AreaChart data={activeMonths.map(mn=>({month:mn,...(incomeExpenseByMonth[mn]??{income:0,expense:0}),net:(incomeExpenseByMonth[mn]?.income??0)-(incomeExpenseByMonth[mn]?.expense??0)}))} margin={{top:4,right:4,left:-10,bottom:0}}>
+                <AreaChart data={expenseTrendData} margin={{top:4,right:4,left:-10,bottom:0}}>
                   <defs><linearGradient id="gNet" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.green} stopOpacity={0.3}/><stop offset="95%" stopColor={C.green} stopOpacity={0}/></linearGradient></defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/><XAxis dataKey="month" tick={{fontSize:10,fill:'#9ca3af'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:9,fill:'#9ca3af'}} axisLine={false} tickLine={false} tickFormatter={fmtCr}/><Tooltip {...TT} formatter={fmtCr}/><Legend wrapperStyle={{fontSize:11}}/>
                   <Area type="monotone" dataKey="net" name="Net Surplus" stroke={C.green} fill="url(#gNet)" strokeWidth={2.5}/>
@@ -1448,10 +1566,9 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
           <CC title="📋 Monthly Expense Detail" subtitle={`${rangeLabel}`} style={{marginBottom:20}}>
             <table style={{width:'100%',borderCollapse:'collapse'}}>
               <thead><tr><th style={tH}>Month</th><th style={tH}>Income</th><th style={tH}>Expense</th><th style={tH}>Salary</th><th style={tH}>Infra</th><th style={tH}>Maint.</th><th style={tH}>Net</th></tr></thead>
-              <tbody>{activeMonths.map(mn=>{
-                const d=incomeExpenseByMonth[mn]??{income:0,expense:0};
-                const net=d.income-d.expense;
-                return<tr key={mn}><td style={{...tD,fontWeight:700}}>{mn}</td><td style={{...tD,color:C.blue,fontWeight:700}}>{fmtCr(d.income)}</td><td style={{...tD,color:C.orange,fontWeight:700}}>{fmtCr(d.expense)}</td><td style={tD}>{fmtCr(d.expense*0.58)}</td><td style={tD}>{fmtCr(d.expense*0.22)}</td><td style={tD}>{fmtCr(d.expense*0.12)}</td><td style={{...tD,fontWeight:800,color:net>0?C.green:C.red}}>{fmtCr(net)}</td></tr>;
+              <tbody>{expenseTrendData.map((d)=>{
+                const net = Number(d.net ?? (Number(d.income || 0) - Number(d.expense || 0)));
+                return<tr key={d.month}><td style={{...tD,fontWeight:700}}>{d.month}</td><td style={{...tD,color:C.blue,fontWeight:700}}>{fmtCr(Number(d.income || 0))}</td><td style={{...tD,color:C.orange,fontWeight:700}}>{fmtCr(Number(d.expense || 0))}</td><td style={tD}>{fmtCr(Number(d.expense || 0)*0.58)}</td><td style={tD}>{fmtCr(Number(d.expense || 0)*0.22)}</td><td style={tD}>{fmtCr(Number(d.expense || 0)*0.12)}</td><td style={{...tD,fontWeight:800,color:net>0?C.green:C.red}}>{fmtCr(net)}</td></tr>;
               })}</tbody>
             </table>
           </CC>
@@ -1462,15 +1579,15 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
         <>
           <div style={{display:'flex',gap:16,marginBottom:24,flexWrap:'wrap'}}>
             <SCard label="Total Scholarships" value={fiCards.scholarships}                               sub="Active avg"     tone="blue"   icon="🎓"/>
-            <SCard label="Merit-based"         value={`${scholarshipByDept.reduce((s,d)=>s+d.merit,0)}`} sub="All depts"      tone="green"  icon="⭐"/>
-            <SCard label="Need-based"          value={`${scholarshipByDept.reduce((s,d)=>s+d.needBased,0)}`} sub="All depts" tone="orange"  icon="🤝"/>
-            <SCard label="Sports Quota"        value={`${scholarshipByDept.reduce((s,d)=>s+d.sports,0)}`} sub="All depts"    tone="purple"  icon="🏅"/>
+            <SCard label="Merit-based"         value={`${scholarshipDeptData.reduce((s,d)=>s+d.merit,0)}`} sub="All depts"      tone="green"  icon="⭐"/>
+            <SCard label="Need-based"          value={`${scholarshipDeptData.reduce((s,d)=>s+d.needBased,0)}`} sub="All depts" tone="orange"  icon="🤝"/>
+            <SCard label="Sports Quota"        value={`${scholarshipDeptData.reduce((s,d)=>s+d.sports,0)}`} sub="All depts"    tone="purple"  icon="🏅"/>
           </div>
 
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20,marginBottom:20}}>
             <CC title="🏫 Scholarships by Department" subtitle="Merit, need-based, sports">
               <ResponsiveContainer width="100%" height={H2}>
-                <BarChart data={dc?scholarshipByDept.filter(d=>d.dept===dc):scholarshipByDept} margin={{top:4,right:4,left:-20,bottom:0}}>
+                <BarChart data={scholarshipDeptData} margin={{top:4,right:4,left:-20,bottom:0}}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/><XAxis dataKey="dept" tick={{fontSize:11,fill:'#9ca3af'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:10,fill:'#9ca3af'}} axisLine={false} tickLine={false}/><Tooltip {...TT}/><Legend wrapperStyle={{fontSize:11}}/>
                   <Bar dataKey="merit"    name="Merit"     fill={C.blue}   radius={[0,0,0,0]}/>
                   <Bar dataKey="needBased" name="Need"     fill={C.green}  radius={[0,0,0,0]}/>
@@ -1480,7 +1597,7 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
             </CC>
             <CC title="🎓 Scholarship Type Split" subtitle="Total across all depts">
               <ResponsiveContainer width="100%" height={H2}>
-                <PieChart><Pie data={[{name:'Merit',value:scholarshipByDept.reduce((s,d)=>s+d.merit,0)},{name:'Need-based',value:scholarshipByDept.reduce((s,d)=>s+d.needBased,0)},{name:'Sports',value:scholarshipByDept.reduce((s,d)=>s+d.sports,0)}]} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={<PieLabelInside labelType="count"/>} labelLine={false}>
+                <PieChart><Pie data={scholarshipTypeData} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={<PieLabelInside labelType="count"/>} labelLine={false}>
                   {[0,1,2].map(i=><Cell key={i} fill={[C.blue,C.green,C.orange][i]}/>)}
                 </Pie><Tooltip {...TT}/><Legend wrapperStyle={{fontSize:12}}/></PieChart>
               </ResponsiveContainer>
@@ -1490,9 +1607,10 @@ function FinanceView({activeMonths,rangeLabel,department,semester,analyticsData}
           <CC title="📋 Scholarship Detail Table" subtitle="Per department breakdown" style={{marginBottom:20}}>
             <table style={{width:'100%',borderCollapse:'collapse'}}>
               <thead><tr><th style={tH}>Department</th><th style={tH}>Merit</th><th style={tH}>Need-based</th><th style={tH}>Sports</th><th style={tH}>Total</th><th style={tH}>% of Students</th></tr></thead>
-              <tbody>{(dc?scholarshipByDept.filter(d=>d.dept===dc):scholarshipByDept).map((d,i)=>{
+              <tbody>{scholarshipDeptData.map((d,i)=>{
                 const total=d.merit+d.needBased+d.sports;
-                const pct=((total/studentsByDept[d.dept])*100).toFixed(1);
+                const totalStudents = Number(d.totalStudents || 0);
+                const pct=(totalStudents>0?((total/totalStudents)*100):0).toFixed(1);
                 return<tr key={i}><td style={{...tD,fontWeight:700}}>{d.dept}</td><td style={{...tD,fontWeight:700,color:C.blue}}>{d.merit}</td><td style={{...tD,fontWeight:700,color:C.green}}>{d.needBased}</td><td style={{...tD,fontWeight:700,color:C.orange}}>{d.sports}</td><td style={{...tD,fontWeight:800}}>{total}</td><td style={tD}><MiniProgress value={parseFloat(pct)} max={20} color={C.purple}/></td></tr>;
               })}</tbody>
             </table>
@@ -1728,27 +1846,17 @@ export default function AnalyticsPage({role:propRole}){
   const [analyticsData, setAnalyticsData] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Debug logging for data flow
-  console.log('=== AnalyticsPage Debug ===');
-  console.log('Current analyticsData:', analyticsData);
-
   // Fetch real data from backend
   useEffect(() => {
     const fetchAnalyticsData = async () => {
       setLoading(true);
-      console.log('Starting fetchAnalyticsData...');
       try {
         const year = startMY.year;
         const semesterNumber = parseInt(semester.match(/\d+/)?.[0] || 1);
-        const deptCode = DEPT_CODE[department];
-        
-        console.log('Fetching with params:', { year, semesterNumber, deptCode });
-        
+        const deptCode = role === 'finance' ? null : DEPT_CODE[department];
+
         const data = await getRealAnalyticsData(year, semesterNumber, deptCode);
-        console.log('Received data:', data);
-        
         setAnalyticsData(data);
-        console.log('Set analyticsData to:', data);
       } catch (error) {
         console.error('Error fetching analytics data:', error);
         // Keep using mock data if fetch fails

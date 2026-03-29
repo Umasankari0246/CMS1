@@ -134,6 +134,7 @@ export const roleMenuGroups = {
     },
     {
       title: 'Intelligence',
+      items: ['Analytics', 'Finance Analytics', 'Notifications', 'Settings'],
       items: ['Analytics', 'Notifications', 'Settings'],
     },
     {
@@ -166,6 +167,7 @@ export const roleMenuGroups = {
     },
     {
       title: 'Intelligence',
+      items: ['Finance Analytics', 'Analytics', 'Notifications', 'Settings'],
       items: ['Analytics', 'Notifications', 'Settings'],
     },
   ],

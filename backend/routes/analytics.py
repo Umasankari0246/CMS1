@@ -1,6 +1,6 @@
 """Analytics API - Aggregates real data from MongoDB collections"""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -202,7 +202,7 @@ async def get_dashboard_analytics(
         
         exam_data = []
         async for doc in db["exams"].aggregate(exam_pipeline):
-            score = round(doc.get("avgScore", 80), 1)
+            score = round(float(doc.get("avgScore") or 80), 1)
             pass_rate = min(100, max(0, round((score / 100) * 100)))
             exam_data.append({
                 "year": str(doc["_id"]),
@@ -212,7 +212,7 @@ async def get_dashboard_analytics(
         
         # If no real exam data, calculate from student CGPA
         if not exam_data and student_analytics:
-            avg_cgpa = student_analytics.get("academicPerformance", {}).get("averageCGPA", 7.8)
+            avg_cgpa = float(student_analytics.get("academicPerformance", {}).get("averageCGPA") or 7.8)
             exam_data = [
                 {"year": "2023", "passRate": min(100, max(0, round((avg_cgpa / 10) * 100))), "avgMarks": round(avg_cgpa * 10, 1)},
                 {"year": "2024", "passRate": min(100, max(0, round((avg_cgpa / 10) * 100))), "avgMarks": round(avg_cgpa * 10, 1)},
@@ -237,7 +237,7 @@ async def get_dashboard_analytics(
         # 10. Calculate pass/fail data by department from student CGPA
         pass_fail_data = []
         if student_analytics and "demographics" in student_analytics and "byDepartment" in student_analytics["demographics"]:
-            avg_cgpa = student_analytics.get("academicPerformance", {}).get("averageCGPA", 7.0)
+            avg_cgpa = float(student_analytics.get("academicPerformance", {}).get("averageCGPA") or 7.0)
             for dept, count in student_analytics["demographics"]["byDepartment"].items():
                 # Calculate pass rate based on CGPA (CGPA > 6.0 is considered pass)
                 pass_rate = min(95, max(60, int((avg_cgpa - 5.0) * 20 + 60)))  # Scale CGPA to pass rate
@@ -312,8 +312,8 @@ async def get_dashboard_analytics(
             ]).to_list(length=1)
             
             if dept_stats:
-                avg_cgpa = round(dept_stats[0].get("avgCgpa", 7.5), 1)
-                avg_attendance = round(dept_stats[0].get("avgAttendance", 85), 1)
+                avg_cgpa = round(float(dept_stats[0].get("avgCgpa") or 7.5), 1)
+                avg_attendance = round(float(dept_stats[0].get("avgAttendance") or 85), 1)
             else:
                 avg_cgpa = round(7.5 + random.uniform(0, 1.5), 1)
                 avg_attendance = round(80 + random.uniform(0, 10), 1)
@@ -419,7 +419,6 @@ async def get_dashboard_analytics(
         print(f"Error in analytics: {e}")
         return get_empty_analytics(str(e))
 
-
 def get_month_name(year_month):
     """Convert YYYY-MM to month name"""
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -462,7 +461,11 @@ def calculate_grade_distribution(exam_data):
     }
 
     for exam in exam_data:
-        grade = exam["grade"]
+        grade = exam.get("grade")
+        if not grade:
+            # Fallback when only numeric/average marks are present
+            score = exam.get("score", exam.get("avgMarks", 0))
+            grade = score_to_grade(float(score or 0))
         if grade in grades:
             grades[grade] += 1
 
@@ -582,8 +585,8 @@ async def get_student_analytics(db, year=None, semester=None, department=None):
         perf_result = await db["students"].aggregate(performance_pipeline).to_list(length=1)
         if perf_result:
             result = perf_result[0]
-            student_data["academicPerformance"]["averageCGPA"] = round(result["avgCGPA"], 2)
-            student_data["attendance"]["averageAttendance"] = round(result["avgAttendance"], 1)
+            student_data["academicPerformance"]["averageCGPA"] = round(float(result.get("avgCGPA") or 0), 2)
+            student_data["attendance"]["averageAttendance"] = round(float(result.get("avgAttendance") or 0), 1)
         
         # CGPA distribution
         cgpa_ranges = [
@@ -699,10 +702,10 @@ async def get_student_analytics(db, year=None, semester=None, department=None):
             dept_code = doc["_id"] or "Unassigned"
             student_data["academicPerformance"]["byDepartment"] = student_data["academicPerformance"].get("byDepartment", {})
             student_data["academicPerformance"]["byDepartment"][dept_code] = {
-                "avgCGPA": round(doc["avgCGPA"], 2),
-                "avgAttendance": round(doc["avgAttendance"], 1),
+                "avgCGPA": round(float(doc.get("avgCGPA") or 0), 2),
+                "avgAttendance": round(float(doc.get("avgAttendance") or 0), 1),
                 "studentCount": doc["studentCount"],
-                "topCGPA": round(doc["topCGPA"], 2)
+                "topCGPA": round(float(doc.get("topCGPA") or 0), 2)
             }
         
         print(f"DEBUG: Student analytics completed - Total students: {student_data['demographics']['totalStudents']}")
@@ -776,6 +779,12 @@ async def get_finance_analytics(db, year=None, semester=None, department=None):
             "totalExpense": 0,
             "scholarshipsAwarded": 0,
             "monthlyTrends": [],
+            "pendingDetails": [],
+            "overdueTrend": [],
+            "expenseTrends": [],
+            "expenseBreakdown": [],
+            "scholarshipByDepartment": [],
+            "scholarshipTypeSummary": [],
         }
 
         def to_amount(value):
@@ -816,10 +825,32 @@ async def get_finance_analytics(db, year=None, semester=None, department=None):
 
         collections = await db.list_collection_names()
         source_collections = [c for c in ("fees_structure", "fees", "invoices") if c in collections]
+        expense_collections = [c for c in ("payroll", "expenses", "expense") if c in collections]
         print(f"DEBUG: Finance source collections: {source_collections}")
 
         if not source_collections:
             return finance_data
+
+        # Allow finance filtering by either department code or full department name.
+        # The UI sends codes like CS/ECE for dashboard filters, while finance docs
+        # often store human-readable names like "Computer Science".
+        department_filter_terms = set()
+        if department:
+            department_filter_terms.add(str(department).strip().lower())
+            dept_doc = await db["departments"].find_one(
+                {
+                    "$or": [
+                        {"code": str(department).strip()},
+                        {"name": str(department).strip()},
+                    ]
+                },
+                {"code": 1, "name": 1},
+            )
+            if dept_doc:
+                if dept_doc.get("code"):
+                    department_filter_terms.add(str(dept_doc["code"]).strip().lower())
+                if dept_doc.get("name"):
+                    department_filter_terms.add(str(dept_doc["name"]).strip().lower())
 
         records = []
         for collection_name in source_collections:
@@ -840,8 +871,10 @@ async def get_finance_analytics(db, year=None, semester=None, department=None):
                     or doc.get("departmentId")
                     or "General"
                 )
-                if department and department.lower() not in str(dept_name).lower():
-                    continue
+                if department_filter_terms:
+                    normalized_dept = str(dept_name).strip().lower()
+                    if not any(term in normalized_dept or normalized_dept in term for term in department_filter_terms):
+                        continue
 
                 status = normalize_status(doc.get("payment_status") or doc.get("status"))
                 student_id = doc.get("student_id") or doc.get("studentId") or doc.get("roll_no")
@@ -852,13 +885,26 @@ async def get_finance_analytics(db, year=None, semester=None, department=None):
                     or doc.get("date")
                 )
 
+                due_date_value = to_datetime(
+                    doc.get("due_date")
+                    or doc.get("dueDate")
+                    or doc.get("payment_due_date")
+                    or doc.get("deadline")
+                )
+                if not due_date_value and date_value:
+                    due_date_value = date_value + timedelta(days=30)
+
                 records.append(
                     {
                         "amount": amount,
                         "status": status,
                         "department": str(dept_name),
                         "student": str(student_id) if student_id else None,
+                        "student_name": doc.get("student_name") or doc.get("studentName") or str(student_id or "Unknown"),
+                        "roll_no": doc.get("roll_no") or doc.get("rollNo") or doc.get("student_id") or doc.get("studentId"),
+                        "semester": doc.get("semester"),
                         "date": date_value,
+                        "due_date": due_date_value,
                     }
                 )
 
@@ -868,6 +914,9 @@ async def get_finance_analytics(db, year=None, semester=None, department=None):
         monthly_map = {}
         dept_map = {}
         unique_students = set()
+        overdue_month_map = {}
+        pending_details = []
+        now = datetime.now()
 
         for record in records:
             amount = record["amount"]
@@ -884,15 +933,49 @@ async def get_finance_analytics(db, year=None, semester=None, department=None):
 
             dept_entry = dept_map.setdefault(
                 record["department"],
-                {"department": record["department"], "total": 0.0, "paid": 0.0, "pending": 0.0, "students": set()},
+                {
+                    "department": record["department"],
+                    "total": 0.0,
+                    "paid": 0.0,
+                    "pending": 0.0,
+                    "overdue": 0.0,
+                    "students": set(),
+                },
             )
             dept_entry["total"] += amount
             if status == "Paid":
                 dept_entry["paid"] += amount
+            elif status == "Overdue":
+                dept_entry["overdue"] += amount
+                dept_entry["pending"] += amount
             else:
                 dept_entry["pending"] += amount
             if record["student"]:
                 dept_entry["students"].add(record["student"])
+
+            if status != "Paid":
+                due_date = record.get("due_date")
+                days_remaining = None
+                due_label = "N/A"
+                if due_date:
+                    days_remaining = (due_date.date() - now.date()).days
+                    due_label = due_date.strftime("%b %d")
+                pending_details.append(
+                    {
+                        "name": record.get("student_name") or "Unknown",
+                        "rollNo": str(record.get("roll_no") or record.get("student") or "N/A"),
+                        "dept": record["department"],
+                        "amount": round(amount),
+                        "due": due_label,
+                        "days": days_remaining,
+                        "sem": f"Sem {record['semester']}" if record.get("semester") else "N/A",
+                        "status": status,
+                    }
+                )
+
+                if due_date and days_remaining is not None and days_remaining < 0:
+                    month_key = due_date.strftime("%b")
+                    overdue_month_map[month_key] = overdue_month_map.get(month_key, 0.0) + amount
 
             if record["date"]:
                 key = record["date"].strftime("%Y-%m")
@@ -920,6 +1003,7 @@ async def get_finance_analytics(db, year=None, semester=None, department=None):
                     "total": round(values["total"]),
                     "paid": round(values["paid"]),
                     "pending": round(values["pending"]),
+                    "overdue": round(values["overdue"]),
                     "students": len(values["students"]),
                 }
             )
@@ -969,12 +1053,236 @@ async def get_finance_analytics(db, year=None, semester=None, department=None):
             for item in monthly_tail
         ]
 
+        pending_details.sort(key=lambda x: (x.get("days") is None, x.get("days") if x.get("days") is not None else 10**6))
+        finance_data["pendingDetails"] = pending_details[:100]
+
+        month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        finance_data["overdueTrend"] = [
+            {"month": m, "overdue": round(overdue_month_map.get(m, 0.0))}
+            for m in month_order
+            if m in overdue_month_map
+        ]
+
+        # Expense aggregation from real DB collections (payroll/expenses).
+        expense_month_map = {}
+        expense_breakdown_map = {
+            "Salaries": 0.0,
+            "Infrastructure": 0.0,
+            "Maintenance": 0.0,
+            "Events": 0.0,
+            "Other": 0.0,
+        }
+
+        def parse_expense_category(raw_category):
+            category_text = str(raw_category or "").strip().lower()
+            if category_text in {"salary", "salaries", "payroll", "staff"}:
+                return "Salaries"
+            if category_text in {"infra", "infrastructure", "building", "capex", "facility"}:
+                return "Infrastructure"
+            if category_text in {"maintenance", "repair", "repairs"}:
+                return "Maintenance"
+            if category_text in {"event", "events", "program", "programs"}:
+                return "Events"
+            return "Other"
+
+        def parse_expense_date(doc):
+            return to_datetime(
+                doc.get("payDate")
+                or doc.get("date")
+                or doc.get("createdAt")
+                or doc.get("created_at")
+                or doc.get("expenseDate")
+                or doc.get("paidAt")
+            )
+
+        if "payroll" in expense_collections:
+            async for doc in db["payroll"].find({}):
+                dept_value = doc.get("department") or doc.get("dept") or "General"
+                if department_filter_terms:
+                    normalized_dept = str(dept_value).strip().lower()
+                    if not any(term in normalized_dept or normalized_dept in term for term in department_filter_terms):
+                        continue
+
+                expense_amount = max(
+                    to_amount(doc.get("netPay")),
+                    to_amount(doc.get("grossPay")),
+                    to_amount(doc.get("salary")),
+                    to_amount(doc.get("amount")),
+                )
+                if expense_amount <= 0:
+                    expense_amount = (
+                        to_amount(doc.get("basicSalary"))
+                        + to_amount(doc.get("hra"))
+                        + to_amount(doc.get("allowance"))
+                        + to_amount(doc.get("bonus"))
+                    )
+                if expense_amount <= 0:
+                    continue
+
+                expense_date = parse_expense_date(doc)
+                if not expense_date:
+                    pay_period = str(doc.get("payPeriodDetailed") or "").strip()
+                    for fmt in ("%B %Y", "%b %Y"):
+                        try:
+                            expense_date = datetime.strptime(pay_period, fmt)
+                            break
+                        except ValueError:
+                            continue
+
+                if expense_date:
+                    key = expense_date.strftime("%Y-%m")
+                    expense_month_map[key] = expense_month_map.get(key, 0.0) + expense_amount
+
+                finance_data["totalExpense"] += expense_amount
+                expense_breakdown_map["Salaries"] += expense_amount
+
+        for expense_collection in ("expenses", "expense"):
+            if expense_collection not in expense_collections:
+                continue
+            async for doc in db[expense_collection].find({}):
+                dept_value = doc.get("department") or doc.get("dept") or "General"
+                if department_filter_terms:
+                    normalized_dept = str(dept_value).strip().lower()
+                    if not any(term in normalized_dept or normalized_dept in term for term in department_filter_terms):
+                        continue
+
+                expense_amount = max(
+                    to_amount(doc.get("amount")),
+                    to_amount(doc.get("total")),
+                    to_amount(doc.get("expense")),
+                    to_amount(doc.get("cost")),
+                )
+                if expense_amount <= 0:
+                    continue
+
+                expense_date = parse_expense_date(doc)
+                if expense_date:
+                    key = expense_date.strftime("%Y-%m")
+                    expense_month_map[key] = expense_month_map.get(key, 0.0) + expense_amount
+
+                finance_data["totalExpense"] += expense_amount
+                category_name = parse_expense_category(
+                    doc.get("category") or doc.get("expense_type") or doc.get("type")
+                )
+                expense_breakdown_map[category_name] += expense_amount
+
+        for key in sorted(expense_month_map.keys()):
+            yv, mv = key.split("-")
+            month_name = datetime(int(yv), int(mv), 1).strftime("%b")
+            finance_data["expenseTrends"].append(
+                {"month": month_name, "expense": round(expense_month_map[key])}
+            )
+
+        if finance_data["totalExpense"] > 0:
+            finance_data["expenseBreakdown"] = [
+                {
+                    "name": name,
+                    "value": round((value / finance_data["totalExpense"]) * 100),
+                }
+                for name, value in expense_breakdown_map.items()
+                if value > 0
+            ]
+
         finance_data["scholarshipsAwarded"] = max(0, round(len(unique_students) * 0.1))
+
+        # Scholarship analytics from DB where available.
+        def normalize_scholarship_type(raw_type):
+            text = str(raw_type or "").strip().lower()
+            if text in {"merit", "merit-based", "academic", "score"}:
+                return "Merit"
+            if text in {"need", "need-based", "financial", "income"}:
+                return "Need-based"
+            if text in {"sports", "sport", "athletic", "athlete"}:
+                return "Sports"
+            return "Need-based"
+
+        scholarship_type_totals = {"Merit": 0, "Need-based": 0, "Sports": 0}
+        scholarship_dept_map = {}
+
+        # Base student counts by department for percentage calculations.
+        student_dept_counts = {}
+        dept_cursor = db["students"].aggregate([
+            {"$group": {"_id": "$departmentId", "count": {"$sum": 1}}}
+        ])
+        async for doc in dept_cursor:
+            dept_key = str(doc.get("_id") or "General")
+            student_dept_counts[dept_key] = int(doc.get("count", 0))
+
+        if "scholarships" in collections:
+            async for doc in db["scholarships"].find({}):
+                dept_value = str(doc.get("department") or doc.get("departmentId") or doc.get("course") or "General")
+                if department_filter_terms:
+                    normalized_dept = dept_value.strip().lower()
+                    if not any(term in normalized_dept or normalized_dept in term for term in department_filter_terms):
+                        continue
+
+                s_type = normalize_scholarship_type(doc.get("type") or doc.get("scholarship_type") or doc.get("category"))
+                scholarship_type_totals[s_type] += 1
+
+                dept_entry = scholarship_dept_map.setdefault(
+                    dept_value,
+                    {"dept": dept_value, "merit": 0, "needBased": 0, "sports": 0, "totalStudents": 0},
+                )
+                if s_type == "Merit":
+                    dept_entry["merit"] += 1
+                elif s_type == "Sports":
+                    dept_entry["sports"] += 1
+                else:
+                    dept_entry["needBased"] += 1
+
+        # Fallback: derive scholarships from awarded count and department student distribution.
+        if not scholarship_dept_map:
+            total_students_count = sum(student_dept_counts.values())
+            derived_awarded = finance_data["scholarshipsAwarded"]
+            if derived_awarded <= 0:
+                derived_awarded = max(0, round(total_students_count * 0.1))
+                finance_data["scholarshipsAwarded"] = derived_awarded
+
+            if total_students_count > 0 and derived_awarded > 0:
+                running_total = 0
+                dept_items = list(student_dept_counts.items())
+                for idx, (dept_name, student_count) in enumerate(dept_items):
+                    if idx == len(dept_items) - 1:
+                        dept_total = max(0, derived_awarded - running_total)
+                    else:
+                        dept_total = round((student_count / total_students_count) * derived_awarded)
+                        running_total += dept_total
+
+                    merit = round(dept_total * 0.5)
+                    need_based = round(dept_total * 0.35)
+                    sports = max(0, dept_total - merit - need_based)
+
+                    scholarship_dept_map[dept_name] = {
+                        "dept": dept_name,
+                        "merit": merit,
+                        "needBased": need_based,
+                        "sports": sports,
+                        "totalStudents": student_count,
+                    }
+                    scholarship_type_totals["Merit"] += merit
+                    scholarship_type_totals["Need-based"] += need_based
+                    scholarship_type_totals["Sports"] += sports
+
+        # Populate totalStudents for explicit scholarship documents.
+        for dept_name, dept_entry in scholarship_dept_map.items():
+            dept_entry["totalStudents"] = student_dept_counts.get(dept_name, student_dept_counts.get("General", 0))
+
+        finance_data["scholarshipByDepartment"] = sorted(
+            list(scholarship_dept_map.values()),
+            key=lambda x: (x.get("merit", 0) + x.get("needBased", 0) + x.get("sports", 0)),
+            reverse=True,
+        )
+        finance_data["scholarshipTypeSummary"] = [
+            {"name": name, "value": value}
+            for name, value in scholarship_type_totals.items()
+            if value > 0
+        ]
 
         for key in ("Paid", "Pending", "Overdue"):
             finance_data["paymentStatus"][key] = round(finance_data["paymentStatus"][key])
         finance_data["totalCollected"] = round(finance_data["totalCollected"])
         finance_data["totalPending"] = round(finance_data["totalPending"])
+        finance_data["totalExpense"] = round(finance_data["totalExpense"])
 
         print(
             "DEBUG: Finance data completed - "
@@ -994,6 +1302,12 @@ async def get_finance_analytics(db, year=None, semester=None, department=None):
             "totalExpense": 0,
             "scholarshipsAwarded": 0,
             "monthlyTrends": [],
+            "pendingDetails": [],
+            "overdueTrend": [],
+            "expenseTrends": [],
+            "expenseBreakdown": [],
+            "scholarshipByDepartment": [],
+            "scholarshipTypeSummary": [],
         }
 
 
@@ -1024,6 +1338,12 @@ def get_empty_analytics(error_message: str = "No analytics data available"):
                 "totalExpense": 0,
                 "scholarshipsAwarded": 0,
                 "monthlyTrends": [],
+                "pendingDetails": [],
+                "overdueTrend": [],
+                "expenseTrends": [],
+                "expenseBreakdown": [],
+                "scholarshipByDepartment": [],
+                "scholarshipTypeSummary": [],
             },
             "studentAnalytics": {
                 "demographics": {
